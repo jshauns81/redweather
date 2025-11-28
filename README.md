@@ -24,7 +24,7 @@ A beautiful, customizable weather widget for Waybar using the OpenWeatherMap API
 ### Build from Source
 
 ```bash
-git clone https://github.com/yourusername/redweather
+git clone https://github.com/jshauns81/redweather
 cd redweather
 cargo build --release
 sudo cp target/release/redweather /usr/local/bin/

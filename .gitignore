@@ -1,1 +1,24 @@
+# Rust build artifacts
 /target
+Cargo.lock
+**/*.rs.bk
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vs/
+
+# Claude Code
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Config files with sensitive data (if accidentally placed in repo)
+apikey
+*.key
+*.secret
