@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation};
 use reqwest::blocking::Client;
@@ -313,10 +313,10 @@ fn temp_color(temp: f64, bands: &[TempBand]) -> String {
 }
 
 fn fmt_time(dt: i64, tz_offset: i64, fmt: &str) -> String {
-    let naive = NaiveDateTime::from_timestamp_opt(dt + tz_offset, 0)
-        .unwrap_or_else(|| NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
-    let dt = DateTime::<Utc>::from_utc(naive, Utc);
-    dt.format(fmt).to_string()
+    let utc = DateTime::<Utc>::from_timestamp(dt, 0)
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+    let shifted = utc + Duration::seconds(tz_offset);
+    shifted.format(fmt).to_string()
 }
 
 fn short_desc(desc: &str, max_len: usize) -> String {
@@ -325,20 +325,6 @@ fn short_desc(desc: &str, max_len: usize) -> String {
         d.truncate(max_len);
     }
     d
-}
-
-fn visible_len(s: &str) -> usize {
-    let mut in_tag = false;
-    let mut count = 0;
-    for ch in s.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            _ if !in_tag => count += 1,
-            _ => {}
-        }
-    }
-    count
 }
 
 fn format_popup_text(
