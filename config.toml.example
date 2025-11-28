@@ -1,0 +1,82 @@
+# RedWeather Configuration Example
+# Place this file at: ~/.config/redweather/config.toml
+
+# Temperature and speed units: "imperial" (°F, mph) or "metric" (°C, m/s)
+units = "imperial"  # or "metric"
+
+# UI customization
+[ui]
+font_size = 9           # Font size for tooltip text
+max_desc_len = 10       # Maximum length for weather descriptions
+
+# Colors (hex codes)
+[colors]
+header = "#f4b8e4"      # Header text color
+text = "#ffffff"        # Regular text color
+
+# Legacy single location (still supported for backwards compatibility)
+[location]
+lat = 40.7128
+lon = -74.0060
+label = "New York, NY"
+
+# NEW: Multiple location presets
+# You can define multiple locations and switch between them
+[[location_presets]]
+name = "home"
+lat = 40.7128
+lon = -74.0060
+label = "New York, NY"
+
+[[location_presets]]
+name = "work"
+lat = 34.0522
+lon = -118.2437
+label = "Los Angeles, CA"
+
+[[location_presets]]
+name = "vacation"
+lat = 25.7617
+lon = -80.1918
+label = "Miami, FL"
+
+# Set which preset is currently active
+active_preset = "home"  # Use the "home" location
+
+# Temperature color bands (catppuccin-inspired palette)
+# Temperatures below max value will use this color
+[[temp_bands]]
+max = 59.0
+color = "#8caaee"  # Cool blue
+
+[[temp_bands]]
+max = 64.0
+color = "#85c1dc"
+
+[[temp_bands]]
+max = 70.0
+color = "#99d1db"  # Comfortable teal
+
+[[temp_bands]]
+max = 75.0
+color = "#81c8be"
+
+[[temp_bands]]
+max = 81.0
+color = "#a6d189"  # Warm green
+
+[[temp_bands]]
+max = 86.0
+color = "#e5c890"  # Yellow
+
+[[temp_bands]]
+max = 90.0
+color = "#ef9f76"  # Orange
+
+[[temp_bands]]
+max = 92.0
+color = "#ea999c"  # Hot pink
+
+[[temp_bands]]
+max = 500.0
+color = "#e78284"  # Very hot red
