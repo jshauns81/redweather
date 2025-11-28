@@ -3,7 +3,7 @@
 //! This module handles all communication with the OpenWeatherMap API including
 //! weather data fetching, geocoding, and caching.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use reqwest::{Client, Url};
@@ -20,8 +20,6 @@ use crate::config::{Config, Units};
 pub const CACHE_MAX_AGE_SECS: i64 = 600;
 /// Cache directory path relative to HOME
 pub const CACHE_FILE: &str = ".cache/redweather";
-/// ZIP code override file path relative to HOME
-pub const ZIP_OVERRIDE_FILE: &str = ".cache/redweather/zip_override";
 /// Maximum retry attempts for API requests
 const MAX_RETRIES: u32 = 3;
 /// Base delay for exponential backoff (milliseconds)
@@ -56,9 +54,14 @@ pub struct Current {
     pub dt: i64,
     pub temp: f64,
     pub feels_like: Option<f64>,
+    pub pressure: Option<i64>,
     pub humidity: Option<u8>,
+    pub uvi: Option<f64>,
+    pub visibility: Option<u32>,
     pub wind_speed: Option<f64>,
     pub wind_deg: Option<i64>,
+    pub sunrise: Option<i64>,
+    pub sunset: Option<i64>,
     pub weather: Vec<WeatherDesc>,
     #[serde(default)]
     pub rain: Option<HashMap<String, f64>>,
@@ -71,6 +74,9 @@ pub struct Current {
 pub struct Hourly {
     pub dt: i64,
     pub temp: f64,
+    pub pressure: Option<i64>,
+    pub humidity: Option<u8>,
+    pub uvi: Option<f64>,
     pub pop: Option<f64>,
     pub wind_speed: Option<f64>,
     pub wind_deg: Option<i64>,
@@ -89,7 +95,12 @@ pub struct TempRange {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Daily {
     pub dt: i64,
+    pub sunrise: Option<i64>,
+    pub sunset: Option<i64>,
     pub temp: TempRange,
+    pub pressure: Option<i64>,
+    pub humidity: Option<u8>,
+    pub uvi: Option<f64>,
     pub pop: Option<f64>,
     pub weather: Vec<WeatherDesc>,
 }
@@ -156,41 +167,6 @@ pub fn save_cache(cache_key: &str, data: &ApiResponse) {
     }
 }
 
-/// Loads ZIP code override from file (legacy, kept for backwards compatibility)
-pub fn load_zip_override() -> Option<String> {
-    let home = env::var("HOME").ok()?;
-    let path = PathBuf::from(home).join(ZIP_OVERRIDE_FILE);
-    let contents = fs::read_to_string(path).ok()?;
-    let trimmed = contents.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-/// Saves a location as the default home location
-pub fn save_home_location(loc: &Location) -> Result<()> {
-    let home = env::var("HOME").context("HOME environment variable not set")?;
-    let config_path = PathBuf::from(home).join("config/redweather/home_location.json");
-
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).context("Failed to create config directory")?;
-    }
-
-    let json = serde_json::to_string_pretty(loc).context("Failed to serialize location")?;
-    fs::write(config_path, json).context("Failed to write home location file")?;
-    Ok(())
-}
-
-/// Loads the saved home location
-pub fn load_home_location() -> Option<Location> {
-    let home = env::var("HOME").ok()?;
-    let config_path = PathBuf::from(home).join(".config/redweather/home_location.json");
-    let contents = fs::read_to_string(config_path).ok()?;
-    serde_json::from_str(&contents).ok()
-}
-
 /// Fetches weather data for a specific location with retry logic
 pub async fn fetch_weather_for_loc(key: &str, loc: &Location, units: Units) -> Result<ApiResponse> {
     let units_str = match units {
@@ -210,17 +186,13 @@ pub async fn fetch_weather_for_loc(key: &str, loc: &Location, units: Units) -> R
     let mut last_error = None;
     for attempt in 0..MAX_RETRIES {
         match HTTP_CLIENT.get(url.clone()).send().await {
-            Ok(resp) => {
-                match resp.error_for_status() {
-                    Ok(r) => {
-                        match r.json::<ApiResponse>().await {
-                            Ok(parsed) => return Ok(parsed),
-                            Err(e) => last_error = Some(anyhow!("Failed to parse JSON: {}", e)),
-                        }
-                    }
-                    Err(e) => last_error = Some(anyhow!("API returned error status: {}", e)),
-                }
-            }
+            Ok(resp) => match resp.error_for_status() {
+                Ok(r) => match r.json::<ApiResponse>().await {
+                    Ok(parsed) => return Ok(parsed),
+                    Err(e) => last_error = Some(anyhow!("Failed to parse JSON: {}", e)),
+                },
+                Err(e) => last_error = Some(anyhow!("API returned error status: {}", e)),
+            },
             Err(e) => last_error = Some(anyhow!("Request failed: {}", e)),
         }
 
@@ -231,12 +203,13 @@ pub async fn fetch_weather_for_loc(key: &str, loc: &Location, units: Units) -> R
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow!("Weather fetch failed after {} attempts", MAX_RETRIES)))
+    Err(last_error
+        .unwrap_or_else(|| anyhow!("Weather fetch failed after {} attempts", MAX_RETRIES)))
 }
 
-/// Resolves a location from various sources
+/// Resolves a location from command-line overrides or configured presets
 pub async fn resolve_location(key: &str, zip: Option<&str>, cfg: &Config) -> Option<Location> {
-    // Priority 1: Command line ZIP argument
+    // Priority 1: Command line ZIP argument (one-time override)
     if let Some(z) = zip {
         if let Some(loc) = geocode_zip_with_retry(key, z).await {
             return Some(loc);
@@ -265,22 +238,6 @@ pub async fn resolve_location(key: &str, zip: Option<&str>, cfg: &Config) -> Opt
                 label: first.label.clone(),
             });
         }
-    }
-
-    // Priority 3: Legacy single location config
-    if let Some(loc_cfg) = cfg.location.as_ref() {
-        if let (Some(lat), Some(lon)) = (loc_cfg.lat, loc_cfg.lon) {
-            return Some(Location {
-                lat,
-                lon,
-                label: loc_cfg.label.clone().unwrap_or_else(|| "Unknown".to_string()),
-            });
-        }
-    }
-
-    // Priority 4: Saved home location
-    if let Some(home_loc) = load_home_location() {
-        return Some(home_loc);
     }
 
     // No location configured

@@ -1,0 +1,8 @@
+"custom/weather": {
+    "return-type": "json",
+    "exec": "OWM_API_KEY=$OWM_API_KEY /home/shaun/redweather/target/release/redweather",
+    "interval": 900,
+    "tooltip": true,
+    "on-click": "/home/shaun/redweather/target/release/redweather --dashboard",
+    "on-click-right": "/home/shaun/redweather/target/release/redweather --open-web"
+}

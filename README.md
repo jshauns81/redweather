@@ -46,13 +46,13 @@ export OWM_API_KEY="YOUR_API_KEY_HERE"
 
 ### 2. Set your home location
 
-On first run, redweather will automatically prompt you to set your location:
+On first run, redweather will prompt you to set your location:
 
 ```bash
 redweather --prompt
 ```
 
-Enter your ZIP code or city name (e.g., "10001" or "New York, NY"), click Check, then Save.
+Enter your ZIP code or city name (e.g., "10001" or "New York, NY"), click Check, then Save as a preset (e.g., "home").
 
 ## Configuration
 
@@ -88,6 +88,23 @@ header = "#f4b8e4"
 text = "#ffffff"
 ```
 
+### Switching Between Locations
+
+The location prompt window (right-click widget) offers two modes:
+
+**Mode 1: Switch to existing preset**
+1. Select from "Saved locations" dropdown
+2. Click Save
+
+**Mode 2: Search and save as preset**
+1. Enter ZIP or city name
+2. Click Check
+3. Check "Save as preset"
+4. Enter preset name (e.g., "vacation", "office")
+5. Click Save (adds to config.toml presets and sets active)
+
+Preset names can be new or existing (overwrites).
+
 ## Waybar Integration
 
 Add to your Waybar config (`~/.config/waybar/config`):
@@ -97,10 +114,17 @@ Add to your Waybar config (`~/.config/waybar/config`):
     "exec": "~/.local/bin/redweather",
     "return-type": "json",
     "interval": 600,
-    "on-click": "redweather --prompt",
+    "on-click": "redweather --open-web",
+    "on-click-middle": "redweather --reload",
+    "on-click-right": "redweather --prompt",
     "tooltip": true
 }
 ```
+
+**Interactions:**
+- **Left Click**: Open OpenWeatherMap in browser
+- **Right Click**: Open location setup
+- **Middle Click**: Reload weather (bypass cache, fetch fresh data)
 
 ## Usage
 
@@ -114,6 +138,18 @@ redweather
 redweather --prompt
 ```
 
+### Open in Browser
+```bash
+redweather --open-web
+```
+Opens OpenWeatherMap website for your current location.
+
+### Reload Weather (Bypass Cache)
+```bash
+redweather --reload
+```
+Forces a fresh API call, ignoring cached data. Useful after changing config.toml settings.
+
 ### Use Specific ZIP Code (One-Time)
 ```bash
 redweather 10001
@@ -125,9 +161,8 @@ Redweather resolves your location in this order:
 
 1. Command-line ZIP argument (`redweather 10001`)
 2. Active location preset from config
-3. Legacy single location from config
-4. Saved home location (~/.config/redweather/home_location.json)
-5. First-run prompt if none of the above
+3. First preset in config if active_preset is unset
+4. Prompt to configure if none are set
 
 ## Features in Detail
 

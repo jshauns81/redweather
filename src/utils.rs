@@ -51,8 +51,9 @@ pub fn temp_color(temp: f64, bands: &[TempBand]) -> String {
 
 /// Formats a Unix timestamp with timezone offset using the given format string
 pub fn fmt_time(dt: i64, tz_offset: i64, fmt: &str) -> String {
-    let utc = DateTime::<Utc>::from_timestamp(dt, 0)
-        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("epoch timestamp should be valid"));
+    let utc = DateTime::<Utc>::from_timestamp(dt, 0).unwrap_or_else(|| {
+        DateTime::<Utc>::from_timestamp(0, 0).expect("epoch timestamp should be valid")
+    });
     let shifted = utc + Duration::seconds(tz_offset);
     shifted.format(fmt).to_string()
 }
@@ -64,6 +65,54 @@ pub fn short_desc(desc: &str, max_len: usize) -> String {
         d.truncate(max_len);
     }
     d
+}
+
+/// Generates a sparkline string from a list of values using Unicode block characters
+pub fn sparkline(values: &[f64]) -> String {
+    if values.is_empty() {
+        return String::new();
+    }
+    let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    let range = max - min;
+    let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    values
+        .iter()
+        .map(|&v| {
+            if range.abs() < f64::EPSILON {
+                blocks[3] // Middle block for flat line
+            } else {
+                let idx = ((v - min) / range * (blocks.len() - 1) as f64).round() as usize;
+                blocks[idx.min(blocks.len() - 1)]
+            }
+        })
+        .collect()
+}
+
+/// Returns a color hex code for a given UV index
+pub fn uvi_color(uvi: f64) -> &'static str {
+    if uvi < 3.0 {
+        "#a3be8c" // Low (Green)
+    } else if uvi < 6.0 {
+        "#ebcb8b" // Moderate (Yellow)
+    } else if uvi < 8.0 {
+        "#d08770" // High (Orange)
+    } else if uvi < 11.0 {
+        "#bf616a" // Very High (Red)
+    } else {
+        "#b48ead" // Extreme (Purple)
+    }
+}
+
+/// Escapes special characters for Pango markup
+pub fn escape_pango(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&apos;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -120,10 +169,22 @@ mod tests {
     #[test]
     fn test_temp_color() {
         let bands = vec![
-            TempBand { max: 50.0, color: "#blue".into() },
-            TempBand { max: 70.0, color: "#green".into() },
-            TempBand { max: 90.0, color: "#orange".into() },
-            TempBand { max: 500.0, color: "#red".into() },
+            TempBand {
+                max: 50.0,
+                color: "#blue".into(),
+            },
+            TempBand {
+                max: 70.0,
+                color: "#green".into(),
+            },
+            TempBand {
+                max: 90.0,
+                color: "#orange".into(),
+            },
+            TempBand {
+                max: 500.0,
+                color: "#red".into(),
+            },
         ];
 
         assert_eq!(temp_color(40.0, &bands), "#blue");
@@ -137,5 +198,29 @@ mod tests {
         assert_eq!(short_desc("partly cloudy", 10), "partly clo");
         assert_eq!(short_desc("clear", 10), "clear");
         assert_eq!(short_desc("  cloudy  ", 10), "cloudy");
+    }
+
+    #[test]
+    fn test_sparkline() {
+        let data = vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
+        let sl = sparkline(&data);
+        assert_eq!(sl.chars().count(), 8);
+        // Should start low and end high
+        assert!(sl.starts_with(' '));
+        assert!(sl.ends_with('█'));
+    }
+
+    #[test]
+    fn test_uvi_color() {
+        assert_eq!(uvi_color(1.0), "#a3be8c");
+        assert_eq!(uvi_color(12.0), "#b48ead");
+    }
+    
+    #[test]
+    fn test_escape_pango() {
+        assert_eq!(escape_pango("Safe"), "Safe");
+        assert_eq!(escape_pango("R&B"), "R&amp;B");
+        assert_eq!(escape_pango("<tag>"), "&lt;tag&gt;");
+        assert_eq!(escape_pango("'Quote'"), "&apos;Quote&apos;");
     }
 }

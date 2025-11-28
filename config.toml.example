@@ -14,14 +14,8 @@ max_desc_len = 10       # Maximum length for weather descriptions
 header = "#f4b8e4"      # Header text color
 text = "#ffffff"        # Regular text color
 
-# Legacy single location (still supported for backwards compatibility)
-[location]
-lat = 40.7128
-lon = -74.0060
-label = "New York, NY"
-
-# NEW: Multiple location presets
-# You can define multiple locations and switch between them
+# Multiple location presets (single source of truth)
+# Define as many as you like and choose which one is active.
 [[location_presets]]
 name = "home"
 lat = 40.7128
