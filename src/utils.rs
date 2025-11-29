@@ -36,6 +36,51 @@ pub fn pick_icon(desc: &WeatherDesc) -> &'static str {
     }
 }
 
+/// Maps weather description to a small icon key for chart usage.
+/// Keys are asset identifiers (e.g., "clear_day") rather than emoji.
+pub fn pick_small_icon_key(desc: &WeatherDesc, is_night: bool) -> &'static str {
+    let main = desc.main.as_deref().unwrap_or("").to_lowercase();
+    let full = desc.description.as_deref().unwrap_or("").to_lowercase();
+
+    if main.contains("thunder") || full.contains("thunder") {
+        "thunderstorm"
+    } else if main.contains("snow") || full.contains("snow") || main.contains("sleet") {
+        if full.contains("rain") || full.contains("mix") {
+            "sleet"
+        } else {
+            "snow"
+        }
+    } else if main.contains("rain") || full.contains("rain") || full.contains("drizzle") {
+        if full.contains("heavy") {
+            "rain_heavy"
+        } else if full.contains("light") || full.contains("drizzle") {
+            "rain_light"
+        } else {
+            "rain"
+        }
+    } else if full.contains("fog") || full.contains("mist") || full.contains("haze") {
+        "fog"
+    } else if main.contains("cloud") || full.contains("cloud") || full.contains("overcast") {
+        if full.contains("few") || full.contains("scattered") || full.contains("partly") {
+            if is_night {
+                "partly_cloudy_night"
+            } else {
+                "partly_cloudy_day"
+            }
+        } else {
+            "cloudy"
+        }
+    } else if main.contains("clear") || full.contains("clear") || full.contains("sun") {
+        if is_night {
+            "clear_night"
+        } else {
+            "clear_day"
+        }
+    } else {
+        "wind"
+    }
+}
+
 /// Returns the color for a given temperature based on configured bands
 pub fn temp_color(temp: f64, bands: &[TempBand]) -> String {
     for b in bands {

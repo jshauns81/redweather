@@ -4,8 +4,8 @@
 
 use gtk::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, GestureDrag, Grid, HeaderBar, Label,
-    Orientation, ScrolledWindow, Separator, Spinner,
+    Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, FlowBox, GestureDrag,
+    HeaderBar, Label, Orientation, ScrolledWindow, Separator, Spinner,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -107,189 +107,134 @@ fn build_ui(
         .build();
     window.set_child(Some(&main_scroll));
 
-        // Initial Draw
+    // Initial Draw
 
-        refresh_content(&main_scroll, data.as_ref().as_ref(), &loc, units, &cfg);
+    refresh_content(&main_scroll, data.as_ref().as_ref(), &loc, units, &cfg);
 
-    
+    // Spawn background refresh
 
-        // Spawn background refresh
+    let k = key.clone();
 
-        let k = key.clone();
+    let l = loc.clone();
 
-        let l = loc.clone();
+    let s_weak = main_scroll.downgrade();
 
-        let s_weak = main_scroll.downgrade();
+    let c_bg = cfg.clone();
 
-        let c_bg = cfg.clone();
-
-        glib::spawn_future_local(async move {
-
-            match fetch_weather_for_loc(&k, &l, units).await {
-
-                Ok(new_data) => {
-
-                    if let Some(scroll) = s_weak.upgrade() {
-
-                        refresh_content(&scroll, Some(&new_data), &l, units, &c_bg);
-
-                    }
-
+    glib::spawn_future_local(async move {
+        match fetch_weather_for_loc(&k, &l, units).await {
+            Ok(new_data) => {
+                if let Some(scroll) = s_weak.upgrade() {
+                    refresh_content(&scroll, Some(&new_data), &l, units, &c_bg);
                 }
-
-                Err(e) => {
-
-                    if let Some(scroll) = s_weak.upgrade() {
-
-                        show_error_ui(&scroll, &e.to_string());
-
-                    }
-
-                }
-
             }
 
-        });
+            Err(e) => {
+                if let Some(scroll) = s_weak.upgrade() {
+                    show_error_ui(&scroll, &e.to_string());
+                }
+            }
+        }
+    });
 
-    
+    // Settings Button Logic
 
-        // Settings Button Logic
+    let win_weak = window.downgrade();
 
-        let win_weak = window.downgrade();
+    let key_clone = key.clone();
 
-        let key_clone = key.clone();
+    let scroll_weak = main_scroll.downgrade();
 
-        let scroll_weak = main_scroll.downgrade();
+    settings_btn.connect_clicked(move |_| {
+        if let Some(win) = win_weak.upgrade() {
+            let k = key_clone.clone();
 
-        settings_btn.connect_clicked(move |_| {
+            let c = load_config();
 
-            if let Some(win) = win_weak.upgrade() {
+            let s_weak = scroll_weak.clone();
 
-                let k = key_clone.clone();
+            let k_for_fetch = k.clone();
 
-                let c = load_config();
+            show_location_dialog(&win, &k, &c, move || {
+                let k2 = k_for_fetch.clone();
 
-                let s_weak = scroll_weak.clone();
+                let s_weak2 = s_weak.clone();
 
-    
+                glib::spawn_future_local(async move {
+                    let new_cfg = load_config();
 
-                let k_for_fetch = k.clone();
+                    if let Some(new_loc) = resolve_location(&k2, None, &new_cfg).await {
+                        // Show loading state immediately
 
-                show_location_dialog(&win, &k, &c, move || {
-
-                    let k2 = k_for_fetch.clone();
-
-                    let s_weak2 = s_weak.clone();
-
-    
-
-                    glib::spawn_future_local(async move {
-
-                        let new_cfg = load_config();
-
-                        if let Some(new_loc) = resolve_location(&k2, None, &new_cfg).await {
-
-                            // Show loading state immediately
-
-                            if let Some(scroll) = s_weak2.upgrade() {
-
-                                refresh_content(&scroll, None, &new_loc, units, &new_cfg);
-
-                            }
-
-                            match fetch_weather_for_loc(&k2, &new_loc, new_cfg.units).await {
-
-                                Ok(new_data) => {
-
-                                    if let Some(scroll) = s_weak2.upgrade() {
-
-                                        refresh_content(&scroll, Some(&new_data), &new_loc, new_cfg.units, &new_cfg);
-
-                                    }
-
-                                }
-
-                                Err(e) => {
-
-                                    if let Some(scroll) = s_weak2.upgrade() {
-
-                                        show_error_ui(&scroll, &e.to_string());
-
-                                    }
-
-                                }
-
-                            }
-
+                        if let Some(scroll) = s_weak2.upgrade() {
+                            refresh_content(&scroll, None, &new_loc, units, &new_cfg);
                         }
 
-                    });
+                        match fetch_weather_for_loc(&k2, &new_loc, new_cfg.units).await {
+                            Ok(new_data) => {
+                                if let Some(scroll) = s_weak2.upgrade() {
+                                    refresh_content(
+                                        &scroll,
+                                        Some(&new_data),
+                                        &new_loc,
+                                        new_cfg.units,
+                                        &new_cfg,
+                                    );
+                                }
+                            }
 
+                            Err(e) => {
+                                if let Some(scroll) = s_weak2.upgrade() {
+                                    show_error_ui(&scroll, &e.to_string());
+                                }
+                            }
+                        }
+                    }
                 });
-
-            }
-
-        });
-
-    
-
-        window.show();
-
-    }
-
-    
-
-    fn show_error_ui(scroll: &ScrolledWindow, msg: &str) {
-
-        if let Some(_child) = scroll.child() {
-
-            scroll.set_child(gtk::Widget::NONE);
-
+            });
         }
+    });
 
-        let vbox = GtkBox::new(Orientation::Vertical, 10);
+    window.show();
+}
 
-        vbox.set_valign(gtk::Align::Center);
-
-        vbox.set_halign(gtk::Align::Center);
-
-        
-
-        let icon = Label::new(Some("⚠️"));
-
-        icon.add_css_class("hero-icon"); // Reuse large font
-
-        vbox.append(&icon);
-
-        
-
-        let title = Label::new(Some("Weather Unavailable"));
-
-        title.add_css_class("section-title");
-
-        vbox.append(&title);
-
-        
-
-        let err_lbl = Label::new(Some(msg));
-
-        err_lbl.set_wrap(true);
-
-        err_lbl.set_max_width_chars(40);
-
-        err_lbl.add_css_class("detail-title"); // Reuse gray text
-
-        vbox.append(&err_lbl);
-
-        
-
-        scroll.set_child(Some(&vbox));
-
+fn show_error_ui(scroll: &ScrolledWindow, msg: &str) {
+    if let Some(_child) = scroll.child() {
+        scroll.set_child(gtk::Widget::NONE);
     }
 
-    
+    let vbox = GtkBox::new(Orientation::Vertical, 10);
 
-    fn refresh_content(
+    vbox.set_valign(gtk::Align::Center);
+
+    vbox.set_halign(gtk::Align::Center);
+
+    let icon = Label::new(Some("⚠️"));
+
+    icon.add_css_class("hero-icon"); // Reuse large font
+
+    vbox.append(&icon);
+
+    let title = Label::new(Some("Weather Unavailable"));
+
+    title.add_css_class("section-title");
+
+    vbox.append(&title);
+
+    let err_lbl = Label::new(Some(msg));
+
+    err_lbl.set_wrap(true);
+
+    err_lbl.set_max_width_chars(40);
+
+    err_lbl.add_css_class("detail-title"); // Reuse gray text
+
+    vbox.append(&err_lbl);
+
+    scroll.set_child(Some(&vbox));
+}
+
+fn refresh_content(
     scroll: &ScrolledWindow,
     data_opt: Option<&ApiResponse>,
     loc: &Location,
@@ -381,8 +326,7 @@ fn build_ui(
     let desc_label = Label::new(Some(&desc_text));
     desc_label.add_css_class("hero-desc");
 
-    let feels_label =
-        Label::new(Some(&format!("Feels like {:.0}{}", feels_like, temp_unit)));
+    let feels_label = Label::new(Some(&format!("Feels like {:.0}{}", feels_like, temp_unit)));
     feels_label.add_css_class("hero-feels");
 
     temp_info_box.append(&temp_label);
@@ -405,11 +349,12 @@ fn build_ui(
     gauges_label.set_halign(gtk::Align::Start);
     vbox.append(&gauges_label);
 
-    let gauge_grid = Grid::builder()
-        .column_spacing(12)
-        .row_spacing(12)
-        .column_homogeneous(true)
-        .build();
+    let gauge_flow = FlowBox::new();
+    gauge_flow.set_selection_mode(gtk::SelectionMode::None);
+    gauge_flow.set_max_children_per_line(4);
+    gauge_flow.set_min_children_per_line(2);
+    gauge_flow.set_row_spacing(8);
+    gauge_flow.set_column_spacing(8);
 
     let humidity_gauge = create_arc_gauge(
         (humidity as f64 / 100.0).clamp(0.0, 1.0),
@@ -421,12 +366,14 @@ fn build_ui(
         h if h >= 40 => "Comfortable",
         _ => "Dry air",
     };
-    gauge_grid.attach(
-        &create_gauge_card("Humidity", humidity_gauge, humidity_note),
-        0,
-        0,
-        1,
-        1,
+    gauge_flow.insert(
+        &create_gauge_card(
+            "Humidity",
+            humidity_gauge,
+            humidity_note,
+            &format!("Rel. humidity: {}%", humidity),
+        ),
+        -1,
     );
 
     let uvi_gauge = create_arc_gauge(
@@ -440,24 +387,23 @@ fn build_ui(
         u if u >= 3.0 => "Moderate UV",
         _ => "Low UV risk",
     };
-    gauge_grid.attach(
-        &create_gauge_card("UV Index", uvi_gauge, uv_note),
-        1,
-        0,
-        1,
-        1,
+    gauge_flow.insert(
+        &create_gauge_card("UV Index", uvi_gauge, uv_note, &format!("UV {:.1}", uvi)),
+        -1,
     );
 
     let wind_degrees = data.current.wind_deg.unwrap_or(0) as f64;
     let wind_speed_text = format!("{:.0} {}", wind_speed, speed_unit);
     let wind_gauge = create_compass_gauge(wind_degrees, wind_speed_text.clone());
     let wind_note = format!("{} winds", wind_dir);
-    gauge_grid.attach(
-        &create_gauge_card("Wind", wind_gauge, &wind_note),
-        2,
-        0,
-        1,
-        1,
+    gauge_flow.insert(
+        &create_gauge_card(
+            "Wind",
+            wind_gauge,
+            &wind_note,
+            &format!("{} @ {:.0}°", wind_speed_text, wind_degrees),
+        ),
+        -1,
     );
 
     let sunrise = data.current.sunrise.unwrap_or(0);
@@ -488,15 +434,17 @@ fn build_ui(
         format!("{:.1}h left", hrs)
     };
     let daylight_gauge = create_arc_gauge(daylight_progress, daylight_text, (0.94, 0.76, 0.39));
-    gauge_grid.attach(
-        &create_gauge_card("Daylight", daylight_gauge, &daylight_caption),
-        3,
-        0,
-        1,
-        1,
+    gauge_flow.insert(
+        &create_gauge_card(
+            "Daylight",
+            daylight_gauge,
+            &daylight_caption,
+            "Sun progress",
+        ),
+        -1,
     );
 
-    vbox.append(&gauge_grid);
+    vbox.append(&gauge_flow);
 
     vbox.append(&Separator::new(Orientation::Horizontal));
 
@@ -514,7 +462,12 @@ fn build_ui(
 
     if d_cfg.show_hourly_graph {
         // Graph View
-        let graph = create_hourly_graph(&data.hourly, d_cfg.forecast_hours, data.timezone_offset);
+        let graph = create_hourly_graph(
+            &data.hourly,
+            d_cfg.forecast_hours,
+            data.timezone_offset,
+            &data.current,
+        );
         hourly_scroll.set_child(Some(&graph));
     } else {
         // Card List View
@@ -549,6 +502,15 @@ fn build_ui(
             let temp_lbl = Label::new(Some(&format!("{:.0}°", h.temp.round())));
             temp_lbl.add_css_class("forecast-temp");
 
+            if let Some(pop) = h.pop {
+                if pop > 0.0 {
+                    let pop_lbl = Label::new(Some(&format!("POP {:.0}%", pop * 100.0)));
+                    pop_lbl.add_css_class("forecast-pop");
+                    pop_lbl.set_halign(gtk::Align::Center);
+                    card.append(&pop_lbl);
+                }
+            }
+
             card.append(&time_lbl);
             card.append(&icon_lbl);
             card.append(&temp_lbl);
@@ -581,12 +543,29 @@ fn build_ui(
 
         let hi = d.temp.max.or(d.temp.day).unwrap_or(0.0).round();
         let lo = d.temp.min.unwrap_or(0.0).round();
-        let temp_lbl = Label::new(Some(&format!("{:.0}° / {:.0}°", hi, lo)));
-        temp_lbl.add_css_class("daily-temp");
+        let pop_pct = d.pop.unwrap_or(0.0) * 100.0;
+
+        let pill_box = GtkBox::new(Orientation::Horizontal, 6);
+        let hi_lbl = Label::new(Some(&format!("Hi {:.0}°", hi)));
+        hi_lbl.add_css_class("pill-hi");
+        let lo_lbl = Label::new(Some(&format!("Lo {:.0}°", lo)));
+        lo_lbl.add_css_class("pill-lo");
+        pill_box.append(&hi_lbl);
+        pill_box.append(&lo_lbl);
+
+        if pop_pct > 0.0 {
+            let pop_lbl = Label::new(Some(&format!("POP {:.0}%", pop_pct)));
+            if pop_pct >= 70.0 {
+                pop_lbl.add_css_class("pill-pop-high");
+            } else {
+                pop_lbl.add_css_class("pill-pop");
+            }
+            pill_box.append(&pop_lbl);
+        }
 
         row.append(&day_lbl);
         row.append(&icon_lbl);
-        row.append(&temp_lbl);
+        row.append(&pill_box);
         daily_box.append(&row);
     }
     vbox.append(&daily_box);
@@ -594,7 +573,7 @@ fn build_ui(
     scroll.set_child(Some(&vbox));
 }
 
-fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str) -> GtkBox {
+fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str, detail: &str) -> GtkBox {
     let card = GtkBox::new(Orientation::Vertical, 6);
     card.add_css_class("gauge-card");
 
@@ -615,6 +594,13 @@ fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str) -> GtkBox {
     card.append(&title_lbl);
     card.append(&gauge_wrapper);
     card.append(&caption_lbl);
+
+    let tooltip_text = if detail.is_empty() {
+        format!("{} • {}", title, caption)
+    } else {
+        format!("{} • {} • {}", title, caption, detail)
+    };
+    card.set_tooltip_text(Some(&tooltip_text));
 
     card
 }
@@ -744,20 +730,50 @@ const STYLE_CSS: &str = r#"
         font-weight: bold;
     }
 
+    .forecast-pop {
+        font-size: 11px;
+        color: #7aa2f7;
+        margin-top: 4px;
+    }
+
     .day-separator {
         background-color: #414868;
         min-width: 2px;
     }
     
     .daily-row {
-        padding: 8px;
-        background-color: #1f2335;
-        border-radius: 8px;
+        padding: 10px;
+        background-color: #1f2a3f;
+        border-radius: 10px;
+        align-items: center;
     }
     
-    .daily-temp {
+    .pill-hi, .pill-lo, .pill-pop {
         font-weight: bold;
-        margin-left: 10px;
+        padding: 6px 10px;
+        border-radius: 14px;
+        font-size: 12px;
+    }
+
+    .pill-hi {
+        background: linear-gradient(90deg, #3c445f, #2f3650);
+        color: #f6d7a5;
+    }
+
+    .pill-lo {
+        background: linear-gradient(90deg, #2b314a, #22283d);
+        color: #a3c9ff;
+    }
+
+    .pill-pop {
+        background: linear-gradient(90deg, #2d3a4f, #243245);
+        color: #87c8ff;
+    }
+
+    .pill-pop-high {
+        background: linear-gradient(90deg, #255066, #1e3c4f);
+        color: #7ee0ff;
+        box-shadow: 0 0 8px rgba(80, 200, 255, 0.4);
     }
     
     separator {

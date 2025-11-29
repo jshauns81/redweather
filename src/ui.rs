@@ -2,8 +2,8 @@ use anyhow::Result;
 use glib::clone;
 use gtk::prelude::*;
 use gtk::{
-    Adjustment, Application, ApplicationWindow, Box as GtkBox, Button, ComboBoxText, Entry, Label, ListBox,
-    ListBoxRow, Orientation, ScrolledWindow, Separator, SpinButton, Switch, Window,
+    Adjustment, Application, ApplicationWindow, Box as GtkBox, Button, ComboBoxText, Entry, Label,
+    ListBox, ListBoxRow, Orientation, ScrolledWindow, Separator, SpinButton, Switch, Window,
 };
 use std::cell::RefCell;
 use std::process::Command;
@@ -114,13 +114,13 @@ where
     let units_combo = ComboBoxText::new();
     units_combo.append(Some("imperial"), "Imperial (°F, mph)");
     units_combo.append(Some("metric"), "Metric (°C, m/s)");
-    
+
     let current_unit_id = match cfg.units {
         crate::config::Units::Imperial => "imperial",
         crate::config::Units::Metric => "metric",
     };
     units_combo.set_active_id(Some(current_unit_id));
-    
+
     units_row.append(&units_label);
     units_row.append(&units_combo);
     main_vbox.append(&units_row);
