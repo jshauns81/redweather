@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(uvi_color(1.0), "#a3be8c");
         assert_eq!(uvi_color(12.0), "#b48ead");
     }
-    
+
     #[test]
     fn test_escape_pango() {
         assert_eq!(escape_pango("Safe"), "Safe");

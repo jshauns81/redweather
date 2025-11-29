@@ -4,7 +4,9 @@
 //! for Waybar integration.
 
 use crate::config::{ColorsResolved, TempBand, UiConfigResolved, Units};
-use crate::utils::{deg_to_dir, escape_pango, fmt_time, pick_icon, short_desc, sparkline, temp_color, uvi_color};
+use crate::utils::{
+    deg_to_dir, escape_pango, fmt_time, pick_icon, short_desc, sparkline, temp_color, uvi_color,
+};
 use crate::weather::{ApiResponse, Daily, Hourly, WeatherDesc};
 
 /// Formats the current weather section
@@ -60,9 +62,7 @@ pub fn format_current_weather(
     );
 
     let safe_loc = escape_pango(location_label);
-    let safe_desc = escape_pango(
-        current_desc.description.as_deref().unwrap_or("N/A")
-    );
+    let safe_desc = escape_pango(current_desc.description.as_deref().unwrap_or("N/A"));
 
     let mut current_lines = vec![
         format!("🌍 <b>{}</b>", safe_loc),
@@ -79,7 +79,7 @@ pub fn format_current_weather(
     let feels_str = feels
         .map(|f| format!("{:.0}°", f))
         .unwrap_or_else(|| "—".into());
-    
+
     // Row 1: Feels like, Humidity, UV
     current_lines.push(format!(
         "Feels like {} • Hum {}% • UV <span foreground='{}'>{}</span>",
@@ -124,7 +124,7 @@ pub fn format_hourly_forecast(
             } else {
                 "".to_string()
             };
-            
+
             let raw_desc = h
                 .weather
                 .get(0)
@@ -220,7 +220,7 @@ pub fn format_popup_text(
 
     // Build compact tooltip: stacked sections
     let mut tooltip_lines = Vec::new();
-    
+
     // Header is built into current_lines now, but let's keep section structure
     tooltip_lines.extend(wrap_with_style(current_lines, &colors.text, ui.font_size));
     tooltip_lines.push(String::new());

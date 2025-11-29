@@ -169,8 +169,16 @@ impl DashboardConfigResolved {
         match c {
             Some(c) => DashboardConfigResolved {
                 show_hourly_graph: c.show_hourly_graph,
-                forecast_hours: if c.forecast_hours == 0 { defaults.forecast_hours } else { c.forecast_hours },
-                forecast_days: if c.forecast_days == 0 { defaults.forecast_days } else { c.forecast_days },
+                forecast_hours: if c.forecast_hours == 0 {
+                    defaults.forecast_hours
+                } else {
+                    c.forecast_hours
+                },
+                forecast_days: if c.forecast_days == 0 {
+                    defaults.forecast_days
+                } else {
+                    c.forecast_days
+                },
                 window_width: c.window_width.unwrap_or(500),
                 window_height: c.window_height.unwrap_or(700),
             },

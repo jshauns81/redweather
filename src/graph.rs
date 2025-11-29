@@ -11,11 +11,15 @@ use std::rc::Rc;
 use crate::utils::fmt_time;
 use crate::weather::Hourly;
 
-pub fn create_hourly_graph(hourly: &[Hourly], forecast_hours: usize, timezone_offset: i64) -> DrawingArea {
+pub fn create_hourly_graph(
+    hourly: &[Hourly],
+    forecast_hours: usize,
+    timezone_offset: i64,
+) -> DrawingArea {
     let canvas = DrawingArea::new();
     canvas.set_content_width(forecast_hours as i32 * 40);
     canvas.set_content_height(180);
-    
+
     let hourly_data: Vec<(i64, f64)> = hourly
         .iter()
         .take(forecast_hours)
@@ -23,11 +27,21 @@ pub fn create_hourly_graph(hourly: &[Hourly], forecast_hours: usize, timezone_of
         .collect();
 
     // Pre-calculate range
-    let min_temp = hourly_data.iter().map(|(_, t)| *t).fold(f64::INFINITY, f64::min);
-    let max_temp = hourly_data.iter().map(|(_, t)| *t).fold(f64::NEG_INFINITY, f64::max);
+    let min_temp = hourly_data
+        .iter()
+        .map(|(_, t)| *t)
+        .fold(f64::INFINITY, f64::min);
+    let max_temp = hourly_data
+        .iter()
+        .map(|(_, t)| *t)
+        .fold(f64::NEG_INFINITY, f64::max);
     // Ensure range is valid (avoid 0 or infinite range)
     let min_temp = if min_temp.is_finite() { min_temp } else { 0.0 };
-    let max_temp = if max_temp.is_finite() { max_temp } else { 100.0 };
+    let max_temp = if max_temp.is_finite() {
+        max_temp
+    } else {
+        100.0
+    };
     let temp_range = (max_temp - min_temp).max(1.0);
 
     let hover_state = Rc::new(RefCell::new(None::<usize>));
@@ -70,7 +84,16 @@ pub fn create_hourly_graph(hourly: &[Hourly], forecast_hours: usize, timezone_of
 
     canvas.set_draw_func(move |_area, ctx, w, h| {
         let hover = *hover_state.borrow();
-        draw_graph(ctx, w as f64, h as f64, &hourly_data, min_temp, temp_range, hover, timezone_offset);
+        draw_graph(
+            ctx,
+            w as f64,
+            h as f64,
+            &hourly_data,
+            min_temp,
+            temp_range,
+            hover,
+            timezone_offset,
+        );
     });
 
     canvas
@@ -84,35 +107,128 @@ fn draw_graph(
     min_temp: f64,
     temp_range: f64,
     hover_idx: Option<usize>,
-    tz_offset: i64
+    tz_offset: i64,
 ) {
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     // Padding
     let pad_top = 40.0;
-    let pad_bottom = 40.0; 
+    let pad_bottom = 40.0;
     let pad_left = 20.0;
     let pad_right = 20.0;
     let graph_h = height - pad_top - pad_bottom;
     let graph_w = width - pad_left - pad_right;
 
+    // Determine Range
+    let max_temp = min_temp + temp_range; // Recalculate max from range
+
     // Helper to map (index, temp) -> (x, y)
     let count = data.len();
     let step_x = graph_w / (count.max(2) - 1) as f64;
-    
+
+    let temp_to_y = |temp: f64| -> f64 {
+        let normalized_t = (temp - min_temp) / temp_range;
+        pad_top + graph_h - (normalized_t * graph_h)
+    };
+
     let get_pt = |i: usize, temp: f64| -> (f64, f64) {
         let x = pad_left + (i as f64 * step_x);
-        let normalized_t = (temp - min_temp) / temp_range;
-        let y = pad_top + graph_h - (normalized_t * graph_h);
+        let y = temp_to_y(temp);
         (x, y)
     };
 
-    // Gradient Fill
+    // --- Draw Grid ---
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1); // Low opacity white
+    ctx.set_line_width(1.0);
+
+    // Vertical (Time) Lines
+    for i in 0..count {
+        let x = pad_left + (i as f64 * step_x);
+        ctx.move_to(x, pad_top);
+        ctx.line_to(x, height - pad_bottom);
+    }
+    ctx.stroke().expect("Failed grid vert");
+
+    // Day change markers (thicker line at local midnight)
+    let mut last_day = (data[0].0 + tz_offset) / 86_400;
+    for i in 1..count {
+        let day = (data[i].0 + tz_offset) / 86_400;
+        if day != last_day {
+            let x = pad_left + (i as f64 * step_x);
+            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.35);
+            ctx.set_line_width(2.0);
+            ctx.move_to(x, pad_top);
+            ctx.line_to(x, height - pad_bottom);
+            ctx.stroke().expect("Failed day marker");
+            last_day = day;
+        }
+    }
+
+    // Time labels along bottom (24h)
+    let label_step = if count > 24 {
+        4
+    } else if count > 12 {
+        3
+    } else {
+        2
+    };
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.35);
+    ctx.select_font_face(
+        "Sans",
+        gtk::cairo::FontSlant::Normal,
+        gtk::cairo::FontWeight::Normal,
+    );
+    ctx.set_font_size(9.0);
+    for i in 0..count {
+        if i % label_step != 0 && i != count - 1 {
+            continue;
+        }
+        let x = pad_left + (i as f64 * step_x);
+        let time_s = fmt_time(data[i].0, tz_offset, "%H:%M");
+        let ext = ctx.text_extents(&time_s).unwrap();
+        ctx.move_to(x - ext.width() / 2.0, height - 6.0);
+        let _ = ctx.show_text(&time_s);
+    }
+
+    // Horizontal (Temp) Lines
+    let temp_step = if temp_range > 20.0 { 10.0 } else { 5.0 };
+    let first_grid_temp = (min_temp / temp_step).ceil() * temp_step;
+
+    let mut t = first_grid_temp;
+    ctx.select_font_face(
+        "Sans",
+        gtk::cairo::FontSlant::Normal,
+        gtk::cairo::FontWeight::Normal,
+    );
+    ctx.set_font_size(10.0);
+
+    while t <= max_temp {
+        let y = temp_to_y(t);
+
+        // Draw line
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1);
+        ctx.move_to(pad_left, y);
+        ctx.line_to(width - pad_right, y);
+        ctx.stroke().expect("Failed grid horz");
+
+        // Draw Label
+        let label = format!("{:.0}°", t);
+        // Draw label slightly to the left of the grid line start or right above line on left
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5);
+        ctx.move_to(pad_left + 2.0, y - 2.0); // Place text just above line
+        let _ = ctx.show_text(&label);
+
+        t += temp_step;
+    }
+
+    // Draw Gradient Fill (Area under curve)
     let gradient = gtk::cairo::LinearGradient::new(0.0, pad_top, 0.0, height);
-    gradient.add_color_stop_rgba(0.0, 0.48, 0.64, 0.96, 0.4); 
-    gradient.add_color_stop_rgba(1.0, 0.48, 0.64, 0.96, 0.0); 
+    gradient.add_color_stop_rgba(0.0, 0.48, 0.64, 0.96, 0.4);
+    gradient.add_color_stop_rgba(1.0, 0.48, 0.64, 0.96, 0.0);
     let _ = ctx.set_source(&gradient);
-    
+
     let (start_x, start_y) = get_pt(0, data[0].1);
     ctx.move_to(start_x, height);
     ctx.line_to(start_x, start_y);
@@ -130,7 +246,7 @@ fn draw_graph(
     ctx.fill().expect("Failed to fill graph");
 
     // Stroke Line
-    ctx.set_source_rgb(0.48, 0.64, 0.96); 
+    ctx.set_source_rgb(0.48, 0.64, 0.96);
     ctx.set_line_width(3.0);
     ctx.move_to(start_x, start_y);
     for i in 0..count - 1 {
@@ -165,18 +281,22 @@ fn draw_graph(
             ctx.stroke().expect("Failed overlay line");
 
             // Tooltip Box
-            let time_s = fmt_time(dt, tz_offset, "%l %p");
+            let time_s = fmt_time(dt, tz_offset, "%H:%M");
             let temp_s = format!("{:.0}°", temp.round());
-            
-            ctx.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Bold);
+
+            ctx.select_font_face(
+                "Sans",
+                gtk::cairo::FontSlant::Normal,
+                gtk::cairo::FontWeight::Bold,
+            );
             ctx.set_font_size(12.0);
             let extents = ctx.text_extents(&time_s).unwrap(); // rough calc
-            
+
             // Draw text above point
             ctx.set_source_rgb(1.0, 1.0, 1.0);
             ctx.move_to(x - extents.width() / 2.0, y - 15.0);
             let _ = ctx.show_text(&temp_s);
-            
+
             // Draw time at bottom
             ctx.move_to(x - extents.width() / 2.0, height - 5.0);
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);

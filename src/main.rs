@@ -3,9 +3,11 @@
 //! This application fetches weather data and displays it in a format suitable for Waybar.
 //! It supports geocoding, caching, and a GTK prompt for location configuration.
 
+mod astro;
 mod config;
 mod dashboard;
 mod formatting;
+mod gauges;
 mod graph;
 mod ui;
 mod utils;
@@ -53,10 +55,7 @@ async fn main() {
 
     // Handle open web mode
     if open_web_mode {
-        let zip_arg = args.iter()
-            .skip(1)
-            .find(|s| !s.starts_with("--"))
-            .cloned();
+        let zip_arg = args.iter().skip(1).find(|s| !s.starts_with("--")).cloned();
         let cfg = load_config();
 
         if let Some(loc) = resolve_location(&key, zip_arg.as_deref(), &cfg).await {
@@ -68,10 +67,7 @@ async fn main() {
 
     // Check if this is first run (no location configured)
     // Filter out flags from arguments to find potential ZIP/location arg
-    let zip_arg = args.iter()
-        .skip(1)
-        .find(|s| !s.starts_with("--"))
-        .cloned();
+    let zip_arg = args.iter().skip(1).find(|s| !s.starts_with("--")).cloned();
     let cfg = load_config();
 
     let loc = resolve_location(&key, zip_arg.as_deref(), &cfg).await;
@@ -80,8 +76,8 @@ async fn main() {
     if loc.is_none() {
         eprintln!("No location configured. Please run with --prompt to set your location.");
         if dashboard_mode {
-             eprintln!("Cannot launch dashboard without a configured location.");
-             return;
+            eprintln!("Cannot launch dashboard without a configured location.");
+            return;
         }
         let fallback = json!({
             "text": "| ❓ Setup",
