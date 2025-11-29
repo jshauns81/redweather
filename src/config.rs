@@ -68,6 +68,8 @@ pub struct DashboardConfig {
     pub forecast_hours: usize,
     #[serde(default)]
     pub forecast_days: usize,
+    pub window_width: Option<i32>,
+    pub window_height: Option<i32>,
 }
 
 impl Default for DashboardConfig {
@@ -76,6 +78,8 @@ impl Default for DashboardConfig {
             show_hourly_graph: true,
             forecast_hours: 24,
             forecast_days: 7,
+            window_width: None,
+            window_height: None,
         }
     }
 }
@@ -155,6 +159,8 @@ pub struct DashboardConfigResolved {
     pub show_hourly_graph: bool,
     pub forecast_hours: usize,
     pub forecast_days: usize,
+    pub window_width: i32,
+    pub window_height: i32,
 }
 
 impl DashboardConfigResolved {
@@ -165,11 +171,15 @@ impl DashboardConfigResolved {
                 show_hourly_graph: c.show_hourly_graph,
                 forecast_hours: if c.forecast_hours == 0 { defaults.forecast_hours } else { c.forecast_hours },
                 forecast_days: if c.forecast_days == 0 { defaults.forecast_days } else { c.forecast_days },
+                window_width: c.window_width.unwrap_or(500),
+                window_height: c.window_height.unwrap_or(700),
             },
             None => DashboardConfigResolved {
                 show_hourly_graph: defaults.show_hourly_graph,
                 forecast_hours: defaults.forecast_hours,
                 forecast_days: defaults.forecast_days,
+                window_width: 500,
+                window_height: 700,
             },
         }
     }

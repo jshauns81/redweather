@@ -15,8 +15,6 @@ pub fn create_hourly_graph(hourly: &[Hourly], forecast_hours: usize, timezone_of
     let canvas = DrawingArea::new();
     canvas.set_content_width(forecast_hours as i32 * 40);
     canvas.set_content_height(180);
-    canvas.set_hexpand(true);
-    canvas.set_vexpand(true);
     
     let hourly_data: Vec<(i64, f64)> = hourly
         .iter()

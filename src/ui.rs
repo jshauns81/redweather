@@ -210,13 +210,11 @@ where
     main_vbox.append(&result_box);
     
     // Saved Locations Section
-    let saved_box = GtkBox::new(Orientation::Vertical, 5);
+    let saved_box = GtkBox::new(Orientation::Horizontal, 10);
     saved_box.set_margin_top(15);
     let saved_label = Label::new(Some("Quick Switch:"));
-    saved_label.set_halign(gtk::Align::Start);
     
     let preset_combo = ComboBoxText::new();
-    preset_combo.set_hexpand(true);
     if let Some(presets) = &cfg.location_presets {
         for preset in presets {
             preset_combo.append(Some(&preset.name), &preset.label);
@@ -236,7 +234,7 @@ where
     main_vbox.append(&spacer);
 
     // Footer
-    let cancel_btn = Button::with_label("Cancel");
+    let cancel_btn = Button::with_label("Done");
     cancel_btn.set_halign(gtk::Align::End);
     main_vbox.append(&cancel_btn);
 

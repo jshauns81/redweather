@@ -46,12 +46,32 @@ fn build_ui(
     key: Rc<String>,
     cfg: Rc<Config>,
 ) {
+    let d_cfg = DashboardConfigResolved::from_config(&cfg.dashboard);
+
     let window = ApplicationWindow::builder()
         .application(app)
         .title("RedWeather Dashboard")
-        .default_width(500)
-        .default_height(700)
+        .default_width(d_cfg.window_width)
+        .default_height(d_cfg.window_height)
         .build();
+
+    // Save window geometry on close
+    window.connect_close_request(move |win| {
+        let width = win.width();
+        let height = win.height();
+        
+        // Load fresh config to ensure we don't overwrite other changes
+        let mut current_cfg = load_config();
+        let dash_cfg = current_cfg.dashboard.get_or_insert_with(crate::config::DashboardConfig::default);
+        dash_cfg.window_width = Some(width);
+        dash_cfg.window_height = Some(height);
+        
+        if let Err(e) = crate::config::save_config(&current_cfg) {
+            eprintln!("Failed to save window state: {}", e);
+        }
+        
+        gtk::glib::Propagation::Proceed
+    });
 
     // Apply custom CSS
     let provider = gtk::CssProvider::new();
