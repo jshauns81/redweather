@@ -38,6 +38,7 @@ pub fn pick_icon(desc: &WeatherDesc) -> &'static str {
 
 /// Maps weather description to a small icon key for chart usage.
 /// Keys are asset identifiers (e.g., "clear_day") rather than emoji.
+#[allow(dead_code)]
 pub fn pick_small_icon_key(desc: &WeatherDesc, is_night: bool) -> &'static str {
     let main = desc.main.as_deref().unwrap_or("").to_lowercase();
     let full = desc.description.as_deref().unwrap_or("").to_lowercase();

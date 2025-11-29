@@ -465,8 +465,7 @@ fn refresh_content(
         let graph = create_hourly_graph(
             &data.hourly,
             d_cfg.forecast_hours,
-            data.timezone_offset,
-            &data.current,
+            data.timezone_offset as i32,
         );
         hourly_scroll.set_child(Some(&graph));
     } else {
@@ -745,7 +744,6 @@ const STYLE_CSS: &str = r#"
         padding: 10px;
         background-color: #1f2a3f;
         border-radius: 10px;
-        align-items: center;
     }
     
     .pill-hi, .pill-lo, .pill-pop {
