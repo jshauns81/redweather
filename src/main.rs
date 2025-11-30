@@ -58,7 +58,7 @@ async fn main() {
         let zip_arg = args.iter().skip(1).find(|s| !s.starts_with("--")).cloned();
         let cfg = load_config();
 
-        if let Some(loc) = resolve_location(&key, zip_arg.as_deref(), &cfg).await {
+        if let Ok(Some(loc)) = resolve_location(&key, zip_arg.as_deref(), &cfg).await {
             let url = format!("https://openweathermap.org/city/{}/{}", loc.lat, loc.lon);
             let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
         }
@@ -73,22 +73,37 @@ async fn main() {
     let loc = resolve_location(&key, zip_arg.as_deref(), &cfg).await;
 
     // If no location is configured, show setup message
-    if loc.is_none() {
-        eprintln!("No location configured. Please run with --prompt to set your location.");
-        if dashboard_mode {
-            eprintln!("Cannot launch dashboard without a configured location.");
+    let loc = match loc {
+        Ok(Some(l)) => l,
+        Ok(None) => {
+            eprintln!("No location configured. Please run with --prompt to set your location.");
+            if dashboard_mode {
+                eprintln!("Cannot launch dashboard without a configured location.");
+                return;
+            }
+            let fallback = json!({
+                "text": "| ❓ Setup",
+                "tooltip": "<span foreground='#f4b8e4'>Right-click to set your location</span>",
+                "markup": "pango"
+            });
+            println!("{}", fallback);
             return;
         }
-        let fallback = json!({
-            "text": "| ❓ Setup",
-            "tooltip": "<span foreground='#f4b8e4'>Right-click to set your location</span>",
-            "markup": "pango"
-        });
-        println!("{}", fallback);
-        return;
-    }
+        Err(e) => {
+            eprintln!("Location resolution failed: {}", e);
+            if dashboard_mode {
+                return;
+            }
+            let fallback = json!({
+                "text": "| ❓ Error",
+                "tooltip": format!("<span foreground='#f4b8e4'>Location error: {}</span>", e),
+                "markup": "pango"
+            });
+            println!("{}", fallback);
+            return;
+        }
+    };
 
-    let loc = loc.unwrap(); // Safe because we checked above
     let cache_key = format!("{:.3}_{:.3}", loc.lat, loc.lon);
 
     // Dashboard Mode: Launch immediately with cached data (if any)

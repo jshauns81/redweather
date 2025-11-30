@@ -202,8 +202,8 @@ where
     days_label.set_halign(gtk::Align::Start);
     let days_adj = Adjustment::new(
         initial_dash_cfg.forecast_days as f64,
-        3.0,
-        10.0,
+        5.0,
+        12.0,
         1.0,
         0.0,
         0.0,
@@ -354,10 +354,21 @@ where
         let is_p = is_preset.clone();
 
         glib::spawn_future_local(async move {
-            let res = if let Some(loc) = geocode_zip(&k, &query).await {
-                Some(loc)
-            } else {
-                geocode_direct(&k, &query).await
+            let res = match geocode_zip(&k, &query).await {
+                Ok(Some(loc)) => Some(loc),
+                Ok(None) => {
+                    match geocode_direct(&k, &query).await {
+                        Ok(Some(loc)) => Some(loc),
+                        _ => None, // Ignore direct errors or not found
+                    }
+                }
+                Err(_) => {
+                    // If ZIP lookup failed with error (not just not found), try direct
+                    match geocode_direct(&k, &query).await {
+                        Ok(Some(loc)) => Some(loc),
+                        _ => None,
+                    }
+                }
             };
 
             match res {
