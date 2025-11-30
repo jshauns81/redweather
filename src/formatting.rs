@@ -5,7 +5,8 @@
 
 use crate::config::{ColorsResolved, TempBand, UiConfigResolved, Units};
 use crate::utils::{
-    deg_to_dir, escape_pango, fmt_time, pick_icon, short_desc, sparkline, temp_color, uvi_color,
+    deg_to_dir, escape_pango, fmt_time, is_night, moon_phase_icon, pick_icon, short_desc,
+    sparkline, temp_color, uvi_color,
 };
 use crate::weather::{ApiResponse, Daily, Hourly, WeatherDesc};
 
@@ -24,7 +25,9 @@ pub fn format_current_weather(
         main: Some("Clear".into()),
         description: Some("Clear".into()),
     });
-    let icon = pick_icon(&current_desc);
+    let night = is_night(data.current.dt, data.current.sunrise, data.current.sunset);
+    let moon_icon = Some(moon_phase_icon(data.current.dt, data.timezone_offset));
+    let icon = pick_icon(&current_desc, night, moon_icon);
     let temp = data.current.temp.round();
     let feels = data.current.feels_like.map(|t| t.round());
     let humidity = data.current.humidity.unwrap_or(0);
@@ -117,7 +120,13 @@ pub fn format_hourly_forecast(
         .map(|h| {
             let label = fmt_time(h.dt, timezone_offset, "%-I%p");
             let h_temp = h.temp.round();
-            let icon_h = h.weather.get(0).map(pick_icon).unwrap_or("❓");
+            let local_hour = ((h.dt + timezone_offset) / 3600) % 24;
+            let night = local_hour < 6 || local_hour >= 18;
+            let icon_h = h
+                .weather
+                .get(0)
+                .map(|d| pick_icon(d, night, Some(moon_phase_icon(h.dt, timezone_offset))))
+                .unwrap_or_else(|| "❓".into());
             let pop = h.pop.map(|p| (p * 100.0).round() as i64).unwrap_or(0);
             let precip_str = if pop > 0 {
                 format!("💧{}%", pop)
@@ -161,7 +170,11 @@ pub fn format_daily_forecast(
             let day = fmt_time(d.dt, timezone_offset, "%a");
             let hi = d.temp.max.or(d.temp.day).unwrap_or(0.0).round();
             let lo = d.temp.min.unwrap_or(0.0).round();
-            let icon_d = d.weather.get(0).map(pick_icon).unwrap_or("❓");
+            let icon_d = d
+                .weather
+                .get(0)
+                .map(|desc| pick_icon(desc, false, None))
+                .unwrap_or_else(|| "❓".into());
             let pop = d.pop.map(|p| (p * 100.0).round() as i64).unwrap_or(0);
             let precip_str = if pop > 0 {
                 format!("💧{}%", pop)

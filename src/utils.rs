@@ -7,6 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use crate::config::TempBand;
 use crate::weather::WeatherDesc;
 
+const SYNODIC_MONTH: f64 = 29.530_588_67;
+const NEW_MOON_EPOCH_UTC: i64 = 947_182_440; // 2000-01-06 18:14:00 UTC
+
 /// Converts wind degree to cardinal direction (N, NE, E, etc.)
 pub fn deg_to_dir(deg: Option<i64>) -> String {
     let d = deg.unwrap_or(0) as f64;
@@ -15,24 +18,58 @@ pub fn deg_to_dir(deg: Option<i64>) -> String {
     dirs[idx].to_string()
 }
 
-/// Selects an appropriate emoji icon based on weather description
-pub fn pick_icon(desc: &WeatherDesc) -> &'static str {
+/// Returns a moon phase emoji for the given timestamp (with tz offset)
+pub fn moon_phase_icon(dt: i64, tz_offset: i64) -> &'static str {
+    let local_ts = dt + tz_offset;
+    let days_since_epoch = (local_ts - NEW_MOON_EPOCH_UTC) as f64 / 86_400.0;
+    let phase = days_since_epoch.rem_euclid(SYNODIC_MONTH);
+    let idx = ((phase / SYNODIC_MONTH) * 8.0).round() as usize % 8;
+    match idx {
+        0 => "🌑",
+        1 => "🌒",
+        2 => "🌓",
+        3 => "🌔",
+        4 => "🌕",
+        5 => "🌖",
+        6 => "🌗",
+        _ => "🌘",
+    }
+}
+
+/// Determines whether a timestamp is considered night given sunrise/sunset
+pub fn is_night(dt: i64, sunrise: Option<i64>, sunset: Option<i64>) -> bool {
+    match (sunrise, sunset) {
+        (Some(sr), Some(ss)) if ss > sr => dt < sr || dt >= ss,
+        _ => false,
+    }
+}
+
+/// Selects an appropriate emoji icon based on weather description and time of day
+pub fn pick_icon(desc: &WeatherDesc, is_night: bool, moon_icon: Option<&str>) -> String {
     let main = desc.main.as_deref().unwrap_or("").to_lowercase();
     let full = desc.description.as_deref().unwrap_or("").to_lowercase();
     if main.contains("thunder") || full.contains("thunder") {
-        "⛈️"
+        "⛈️".into()
     } else if main.contains("snow") || full.contains("snow") || main.contains("sleet") {
-        "❄️"
+        "❄️".into()
     } else if main.contains("rain") || full.contains("rain") || full.contains("drizzle") {
-        "🌧️"
+        "🌧️".into()
     } else if full.contains("fog") || full.contains("mist") || full.contains("haze") {
-        "🌫️"
+        "🌫️".into()
     } else if main.contains("cloud") || full.contains("cloud") || full.contains("overcast") {
-        "☁️"
+        if is_night {
+            "☁️".into()
+        } else {
+            "☁️".into()
+        }
     } else if main.contains("clear") || full.contains("clear") || full.contains("sun") {
-        "☀️"
+        if is_night {
+            moon_icon.unwrap_or("🌙").to_string()
+        } else {
+            "☀️".into()
+        }
     } else {
-        "❓"
+        "❓".into()
     }
 }
 
@@ -185,31 +222,32 @@ mod tests {
             main: Some("Thunderstorm".into()),
             description: Some("thunderstorm with rain".into()),
         };
-        assert_eq!(pick_icon(&thunder), "⛈️");
+        assert_eq!(pick_icon(&thunder, false, None), "⛈️");
 
         let snow = WeatherDesc {
             main: Some("Snow".into()),
             description: Some("light snow".into()),
         };
-        assert_eq!(pick_icon(&snow), "❄️");
+        assert_eq!(pick_icon(&snow, false, None), "❄️");
 
         let rain = WeatherDesc {
             main: Some("Rain".into()),
             description: Some("moderate rain".into()),
         };
-        assert_eq!(pick_icon(&rain), "🌧️");
+        assert_eq!(pick_icon(&rain, false, None), "🌧️");
 
         let clear = WeatherDesc {
             main: Some("Clear".into()),
             description: Some("clear sky".into()),
         };
-        assert_eq!(pick_icon(&clear), "☀️");
+        assert_eq!(pick_icon(&clear, false, Some("🌙")), "☀️");
+        assert_eq!(pick_icon(&clear, true, Some("🌙")), "🌙");
 
         let clouds = WeatherDesc {
             main: Some("Clouds".into()),
             description: Some("broken clouds".into()),
         };
-        assert_eq!(pick_icon(&clouds), "☁️");
+        assert_eq!(pick_icon(&clouds, false, None), "☁️");
     }
 
     #[test]

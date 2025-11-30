@@ -29,8 +29,10 @@ pub fn create_hourly_graph(
 ) -> DrawingArea {
     let data: Rc<Vec<Hourly>> = Rc::new(hourly.iter().take(forecast_hours).cloned().collect());
     let area = DrawingArea::new();
-    area.set_content_height(220);
-    area.set_content_width((forecast_hours as i32).max(1) * 40);
+    area.add_css_class("hourly-graph-canvas");
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+    area.set_height_request(260);
 
     let anim_state = Rc::new(RefCell::new(AnimState {
         prev_y: Vec::new(),
@@ -80,32 +82,39 @@ pub fn create_hourly_graph(
         let mut st = anim_state_for_draw.borrow_mut();
 
         // Colors
-        let bg = (
-            0x1f as f64 / 255.0,
+        let bg_top = (
+            0x10 as f64 / 255.0,
+            0x14 as f64 / 255.0,
+            0x2a as f64 / 255.0,
+        );
+        let bg_bottom = (
+            0x0c as f64 / 255.0,
+            0x11 as f64 / 255.0,
             0x23 as f64 / 255.0,
-            0x35 as f64 / 255.0,
         );
-        let grid_color = (65.0 / 255.0, 72.0 / 255.0, 104.0 / 255.0, 0.18);
-        let tick_color = (86.0 / 255.0, 95.0 / 255.0, 137.0 / 255.0, 0.9);
-        let tick_label_color = (
-            0x56 as f64 / 255.0,
-            0x5f as f64 / 255.0,
-            0x89 as f64 / 255.0,
-        );
-        let temp_line = (0.48, 0.64, 0.96);
-        let temp_fill_top = (122.0 / 255.0, 162.0 / 255.0, 247.0 / 255.0, 0.35);
-        let temp_fill_bot = (122.0 / 255.0, 162.0 / 255.0, 247.0 / 255.0, 0.0);
+        let grid_color = (56.0 / 255.0, 64.0 / 255.0, 100.0 / 255.0, 0.16);
+        let tick_color = (96.0 / 255.0, 110.0 / 255.0, 170.0 / 255.0, 0.85);
+        let tick_label_color = (0.58, 0.66, 0.87);
+        // Tokyo Night Graph Colors
+        // Line: Cyan (#22d3ee) -> (0.133, 0.827, 0.933)
+        let temp_line = (0.133, 0.827, 0.933);
+
+        // Fill Top: Purple (#a855f7) with alpha -> (0.659, 0.333, 0.969, 0.4)
+        let temp_fill_top = (0.659, 0.333, 0.969, 0.4);
+
+        // Fill Bot: Fully Transparent
+        let temp_fill_bot = (0.659, 0.333, 0.969, 0.0);
+
         let _pop_bar = (135.0 / 255.0, 206.0 / 255.0, 250.0 / 255.0, 0.85);
-        let pop_label = (135.0 / 255.0, 206.0 / 255.0, 250.0 / 255.0, 0.8);
-        let marker_color = (0.84, 0.89, 1.0);
-        let time_color = (
-            0x56 as f64 / 255.0,
-            0x5f as f64 / 255.0,
-            0x89 as f64 / 255.0,
-        );
+        let pop_label = (0.35, 0.84, 1.0, 0.82);
+        let marker_color = (0.88, 0.93, 1.0);
+        let time_color = (0.58, 0.66, 0.87);
 
         // Background
-        ctx.set_source_rgb(bg.0, bg.1, bg.2);
+        let bg_gradient = gtk::cairo::LinearGradient::new(0.0, 0.0, 0.0, height);
+        bg_gradient.add_color_stop_rgb(0.0, bg_top.0, bg_top.1, bg_top.2);
+        bg_gradient.add_color_stop_rgb(1.0, bg_bottom.0, bg_bottom.1, bg_bottom.2);
+        let _ = ctx.set_source(&bg_gradient);
         let _ = ctx.paint();
 
         if count == 0 {
@@ -143,7 +152,10 @@ pub fn create_hourly_graph(
         let time_axis_y = height - 8.0;
 
         // Temps
-        let mut temp_min = data_for_draw.iter().map(|h| h.temp).fold(f64::INFINITY, f64::min);
+        let mut temp_min = data_for_draw
+            .iter()
+            .map(|h| h.temp)
+            .fold(f64::INFINITY, f64::min);
         let mut temp_max = data_for_draw
             .iter()
             .map(|h| h.temp)
@@ -244,9 +256,9 @@ pub fn create_hourly_graph(
             let x0 = xs[i];
             let x1 = x0 + shade_dx;
             if is_night {
-                ctx.set_source_rgba(0.10, 0.12, 0.20, 0.20);
+                ctx.set_source_rgba(0.08, 0.10, 0.18, 0.16);
             } else {
-                ctx.set_source_rgba(0.12, 0.14, 0.22, 0.10);
+                ctx.set_source_rgba(0.10, 0.12, 0.21, 0.10);
             }
             ctx.rectangle(x0, temp_top, (x1 - x0).max(1.0), precip_bottom - temp_top);
             let _ = ctx.fill();
@@ -254,10 +266,11 @@ pub fn create_hourly_graph(
 
         // 3-hour block shading (light)
         if shade_dx > 20.0 {
-            ctx.set_source_rgba(0.14, 0.16, 0.25, 0.12);
+            ctx.set_source_rgba(0.12, 0.14, 0.24, 0.10);
             for i in (0..count).step_by(3) {
                 let x0 = xs[i];
-                let x1 = xs.get(i + 3).cloned().unwrap_or(*xs.last().unwrap());
+                let last_x = *xs.last().unwrap_or(&x0);
+                let x1 = xs.get(i + 3).cloned().unwrap_or(last_x);
                 ctx.rectangle(x0, temp_top, (x1 - x0).max(1.0), precip_bottom - temp_top);
                 let _ = ctx.fill();
             }
