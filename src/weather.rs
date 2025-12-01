@@ -127,7 +127,7 @@ fn cache_path(cache_key: &str) -> PathBuf {
     let home = env::var("REDWEATHER_CACHE_DIR")
         .or_else(|_| env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    
+
     let safe_key = cache_key
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -418,8 +418,8 @@ pub async fn geocode_direct(key: &str, query: &str) -> Result<Option<Location>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::env;
+    use std::fs;
 
     #[test]
     fn test_cache_path_sanitization() {
@@ -470,7 +470,7 @@ mod tests {
         }"#;
 
         let resp: ApiResponse = serde_json::from_str(json).expect("Failed to parse valid JSON");
-        
+
         assert_eq!(resp.timezone_offset, -18000);
         assert_eq!(resp.current.temp, 72.5);
         assert_eq!(resp.current.weather[0].main.as_deref(), Some("Clouds"));
@@ -485,12 +485,12 @@ mod tests {
         // Create a temporary directory for cache testing
         let temp_dir = env::temp_dir().join("redweather_test_cache");
         fs::create_dir_all(&temp_dir).unwrap();
-        
+
         // Override cache directory using our new env var
         env::set_var("REDWEATHER_CACHE_DIR", &temp_dir);
-        
+
         let cache_key = "test_loc_123";
-        
+
         // Create dummy data
         let dummy_data = ApiResponse {
             timezone_offset: 0,
@@ -516,10 +516,14 @@ mod tests {
 
         // Test Save
         save_cache(cache_key, &dummy_data);
-        
+
         // Verify file exists
         let expected_path = temp_dir.join(format!("{}/cache_{}.json", CACHE_FILE, cache_key));
-        assert!(expected_path.exists(), "Cache file was not created at {:?}", expected_path);
+        assert!(
+            expected_path.exists(),
+            "Cache file was not created at {:?}",
+            expected_path
+        );
 
         // Test Load
         let loaded = load_cache(cache_key);

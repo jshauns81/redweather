@@ -247,41 +247,8 @@ fn build_ui(
     header.pack_end(&settings_btn);
     window.set_titlebar(Some(&header));
 
-    // Responsive Sizing Handler
-    let _window_weak_resize = window.downgrade();
-    window.connect_default_width_notify(move |win| {
-        let width = win.width();
-        let height = win.height();
-
-        // Remove all size classes first
-        win.remove_css_class("size-compact");
-        win.remove_css_class("size-normal");
-        win.remove_css_class("size-large");
-        win.remove_css_class("size-huge");
-
-        if width < 500 {
-            win.add_css_class("size-compact");
-        } else if width < 900 {
-            win.add_css_class("size-normal");
-        } else if width < 1600 {
-            win.add_css_class("size-large");
-        } else {
-            win.add_css_class("size-huge"); // 4k/8k territory
-        }
-
-        // Optional: Height-based adjustments if needed
-        if height < 600 {
-            win.add_css_class("height-short");
-        } else {
-            win.remove_css_class("height-short");
-        }
-    });
-    // Trigger once initially (simple check)
-    if dashboard_config.window_width < 500 {
-        window.add_css_class("size-compact");
-    } else {
-        window.add_css_class("size-normal");
-    }
+    // Apply a default size class once to avoid expensive thrashing on resize
+    window.add_css_class("size-normal");
 
     let main_scroll = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -408,6 +375,7 @@ fn build_gauges_section(data: &ApiResponse, units: Units) -> GtkBox {
     let wind_dir = deg_to_dir(data.current.wind_deg);
 
     let gauge_flow = FlowBox::new();
+    gauge_flow.add_css_class("gauges-group");
     gauge_flow.set_selection_mode(gtk::SelectionMode::None);
     gauge_flow.set_max_children_per_line(4);
     gauge_flow.set_min_children_per_line(2);
@@ -637,7 +605,7 @@ fn build_daily_forecast_section(
     let daily_scroll = ScrolledWindow::builder()
         .vscrollbar_policy(gtk::PolicyType::Never)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .min_content_height(200)
+        .min_content_height(180)
         .build();
     enable_drag_scroll(&daily_scroll);
 
@@ -726,11 +694,11 @@ fn refresh_content(
 
     let dashboard_config = DashboardConfigResolved::from_config(&cfg.dashboard);
 
-    let vbox = GtkBox::new(Orientation::Vertical, 16);
-    vbox.set_margin_top(16);
-    vbox.set_margin_bottom(16);
-    vbox.set_margin_start(0);
-    vbox.set_margin_end(0);
+    let vbox = GtkBox::new(Orientation::Vertical, 8);
+    vbox.set_margin_top(6);
+    vbox.set_margin_bottom(6);
+    vbox.set_margin_start(16);
+    vbox.set_margin_end(16);
     vbox.set_hexpand(true);
     vbox.set_halign(gtk::Align::Fill);
     vbox.add_css_class("main-container");
@@ -767,7 +735,7 @@ fn refresh_content(
     vbox.append(&create_section_divider());
     vbox.append(&build_hourly_forecast_section(data, &dashboard_config));
 
-    vbox.append(&create_section_divider());
+    // Forecast stays scrollable horizontally; omit extra divider to save vertical space
     vbox.append(&build_daily_forecast_section(data, &dashboard_config));
 
     scroll.set_child(Some(&vbox));
@@ -788,7 +756,7 @@ fn sun_window_for(dt: i64, data: &ApiResponse) -> Option<(i64, i64)> {
 
 fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str, detail: &str) -> GtkBox {
     let card = GtkBox::new(Orientation::Vertical, 6);
-    card.add_css_class("gauge-card");
+    card.add_css_class("gauge-item");
     card.set_vexpand(true);
     card.set_valign(gtk::Align::Fill);
 
@@ -960,7 +928,7 @@ const STYLE_CSS: &str = r#"
     window.height-short .main-container { padding-top: 0; padding-bottom: 0; }
     window.height-short .hero-block { padding-bottom: 0.25rem; }
     window.height-short .section-divider { margin-top: 0.4rem; margin-bottom: 0.4rem; }
-    window.height-short .gauge-card { min-height: 6.25rem; padding: 0.55rem 0.55rem 0.7rem; }
+    window.height-short .gauge-item { min-height: 6.25rem; padding: 0.55rem 0.55rem 0.7rem; }
     window.height-short .gauge-canvas { min-height: 4.75rem; min-width: 4.75rem; }
     window.height-short .hero-block { padding: 0.35rem 0.5rem 0.75rem; }
     window.height-short .hourly-graph-canvas { min-height: 7rem; }
@@ -984,18 +952,18 @@ const STYLE_CSS: &str = r#"
     }
     
     .hero-block {
-        padding: 0.5rem 0.75rem 1rem;
-        border-radius: 1rem;
-        background: rgba(255, 255, 255, 0.02);
+        padding: 0.25rem 0.55rem 0.5rem;
+        border-radius: 0.92rem;
+        background: rgba(255, 255, 255, 0.015);
     }
 
-    .hero-icon { font-size: 3.75rem; color: #e6edff; }
+    .hero-icon { font-size: 3.4rem; color: #e6edff; }
     
     .hero-temp {
-        font-size: 3.5rem;
-        font-weight: 800;
+        font-size: 3.2rem;
+        font-weight: 780;
         color: #f5ad2e;
-        letter-spacing: -0.018rem;
+        letter-spacing: -0.016rem;
     }
     
     .hero-desc {
@@ -1008,48 +976,55 @@ const STYLE_CSS: &str = r#"
     .hero-feels { font-size: 0.9rem; color: #a0accf; }
     
     .section-title {
-        font-size: 1.0625rem;
-        font-weight: 700;
+        font-size: 1.02rem;
+        font-weight: 740;
         color: #d8cffc;
-        letter-spacing: 0.012rem;
-        margin-bottom: 0.25rem;
+        letter-spacing: 0.025rem;
+        margin-bottom: 0.2rem;
+        border-bottom: 1px solid rgba(122, 162, 247, 0.28);
+        padding-bottom: 0.12rem;
     }
     
     .gauge-card {
-        background: linear-gradient(180deg, #0f1423 0%, #0b0f1e 100%);
-        padding: 0.75rem 0.75rem 0.9rem;
+        background: linear-gradient(180deg, #10172a 0%, #0c1224 100%);
+        padding: 0.65rem 0.7rem 0.8rem;
         border-radius: 0.9rem;
-        border: 0.0625rem solid rgba(255, 255, 255, 0.06);
-        box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.3);
-        min-width: 6.25rem;
-        min-height: 7.5rem;
+        border: 0.065rem solid rgba(255, 255, 255, 0.06);
+        min-width: 5.4rem;
     }
     
     .detail-title { font-size: 0.75rem; color: #9ca3af; }
 
     .gauge-title {
-        font-size: 0.75rem;
-        font-weight: 700;
+        font-size: 0.8rem;
+        font-weight: 750;
         color: #f1f4ff;
-        letter-spacing: 0.012rem;
-        margin-bottom: 0.375rem;
+        letter-spacing: 0.02rem;
+        margin-bottom: 0.35rem;
     }
 
     .gauge-caption {
-        font-size: 0.75rem;
-        color: #a9b6d7;
-        margin-top: 0.375rem;
+        font-size: 0.78rem;
+        color: #b8c5e6;
+        margin-top: 0.35rem;
     }
     
-    .gauge-canvas { min-width: 5.25rem; min-height: 5.25rem; }
-    window.size-compact .gauge-canvas { min-width: 4.25rem; min-height: 4.25rem; }
-    window.size-large .gauge-canvas { min-width: 6.25rem; min-height: 6.25rem; }
-    window.size-huge .gauge-canvas { min-width: 7.25rem; min-height: 7.25rem; }
+    .gauge-canvas { 
+        min-width: 5rem; 
+        min-height: 5rem; 
+        transition: min-width 0.2s ease-out, min-height 0.2s ease-out;
+    }
+    window.size-compact .gauge-canvas { min-width: 4.2rem; min-height: 4.2rem; }
+    window.size-large .gauge-canvas { min-width: 6rem; min-height: 6rem; }
+    window.size-huge .gauge-canvas { min-width: 6.8rem; min-height: 6.8rem; }
     
-    .hourly-graph-canvas { min-height: 11rem; }
-    window.size-compact .hourly-graph-canvas { min-height: 8.5rem; }
-    window.height-short .hourly-graph-canvas { min-height: 6rem; }
-    window.size-large .hourly-graph-canvas { min-height: 13rem; }
+    .hourly-graph-canvas { 
+        min-height: 8.4rem; 
+        transition: min-height 0.2s ease-out;
+    }
+    window.size-compact .hourly-graph-canvas { min-height: 7.2rem; }
+    window.height-short .hourly-graph-canvas { min-height: 5.5rem; }
+    window.size-large .hourly-graph-canvas { min-height: 9.5rem; }
     
     .forecast-card {
         background: linear-gradient(180deg, #101528 0%, #0c1222 100%);
@@ -1070,12 +1045,12 @@ const STYLE_CSS: &str = r#"
     .day-separator { background-color: rgba(255, 255, 255, 0.08); min-width: 0.125rem; }
     
     .daily-card {
-        padding: 0.75rem 1rem;
+        padding: 0.65rem 0.85rem;
         background: linear-gradient(180deg, #0f1423 0%, #0c1120 100%);
-        border-radius: 0.8rem;
+        border-radius: 0.78rem;
         border: 0.0625rem solid rgba(255, 255, 255, 0.08);
-        min-width: 6.25rem;
-        max-width: 8.125rem;
+        min-width: 6rem;
+        /* max-width: 8rem; */
         box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.3);
     }
 
@@ -1133,32 +1108,33 @@ const STYLE_CSS: &str = r#"
     scrollbar slider:active { background-color: #64748b; }
 
     .panel-card {
-        background: linear-gradient(180deg, rgba(22, 30, 50, 0.75) 0%, rgba(14, 19, 35, 0.9) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 0.9rem;
-        padding: 0.625rem;
+        background: linear-gradient(180deg, rgba(22, 30, 50, 0.82) 0%, rgba(14, 19, 35, 0.94) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.95rem;
+        padding: 0.55rem 0.55rem 0.75rem;
     }
 
     /* TOKYO NIGHT FORECAST CARD STYLES */
     .tokyo-card {
         background: linear-gradient(180deg, #0f172a 0%, #0b1225 55%, #0a0f21 100%);
-        border-radius: 0.75rem;
-        padding: 0;
-        min-width: 5.75rem;  
-        min-height: 8.25rem; 
+        border-radius: 0.78rem;
+        padding: 0.22rem 0.18rem 0.3rem;
+        min-width: 6rem;  
+        min-height: 8rem; 
         margin-bottom: 0.25rem;
         
-        border: 0.0625rem solid rgba(255,255,255,0.05);
-        box-shadow: 0 0 0.5rem rgba(0, 0, 0, 0.35);
+        border: 0.07rem solid rgba(255,255,255,0.07);
+        
+        transition: min-height 0.2s ease-out;
     }
 
     /* Neon Gradient Borders (Purple/Blue) */
-    .tokyo-card-neon-0 { border-bottom: 0.1875rem solid #8b5cf6; box-shadow: 0 0 0.5rem rgba(139, 92, 246, 0.4); }
-    .tokyo-card-neon-1 { border-bottom: 0.1875rem solid #6366f1; box-shadow: 0 0 0.5rem rgba(99, 102, 241, 0.4); }
-    .tokyo-card-neon-2 { border-bottom: 0.1875rem solid #3b82f6; box-shadow: 0 0 0.5rem rgba(59, 130, 246, 0.4); }
-    .tokyo-card-neon-3 { border-bottom: 0.1875rem solid #22d3ee; box-shadow: 0 0 0.5rem rgba(34, 211, 238, 0.4); }
-    .tokyo-card-neon-4 { border-bottom: 0.1875rem solid #0ea5e9; box-shadow: 0 0 0.5rem rgba(14, 165, 233, 0.4); }
-    .tokyo-card-neon-5 { border-bottom: 0.1875rem solid #8b5cf6; box-shadow: 0 0 0.5rem rgba(139, 92, 246, 0.4); }
+    .tokyo-card-neon-0 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0 0.35rem rgba(139, 92, 246, 0.35); }
+    .tokyo-card-neon-1 { border-bottom: 0.18rem solid #6366f1; box-shadow: 0 0 0.35rem rgba(99, 102, 241, 0.35); }
+    .tokyo-card-neon-2 { border-bottom: 0.18rem solid #3b82f6; box-shadow: 0 0 0.35rem rgba(59, 130, 246, 0.35); }
+    .tokyo-card-neon-3 { border-bottom: 0.18rem solid #22d3ee; box-shadow: 0 0 0.35rem rgba(34, 211, 238, 0.35); }
+    .tokyo-card-neon-4 { border-bottom: 0.18rem solid #0ea5e9; box-shadow: 0 0 0.35rem rgba(14, 165, 233, 0.35); }
+    .tokyo-card-neon-5 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0 0.35rem rgba(139, 92, 246, 0.35); }
 
     .tokyo-day {
         font-family: "Cantarell", "Noto Sans", Sans;
@@ -1170,7 +1146,7 @@ const STYLE_CSS: &str = r#"
         margin-left: 0.625rem;
     }
 
-    .tokyo-icon { font-size: 2.25rem; margin-bottom: 0.625rem; }
+    .tokyo-icon { font-size: 2.4rem; margin-bottom: 0.35rem; }
 
     .tokyo-pop-box { margin-bottom: 0.625rem; margin-left: 0.625rem; }
 

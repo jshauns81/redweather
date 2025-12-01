@@ -77,7 +77,7 @@ impl Default for DashboardConfig {
         DashboardConfig {
             show_hourly_graph: true,
             forecast_hours: 24,
-            forecast_days: 7,
+            forecast_days: 5,
             window_width: None,
             window_height: None,
         }
@@ -134,11 +134,10 @@ struct ConfigWithLegacy {
 }
 
 /// Parses configuration TOML, capturing legacy `[location]` if present
-fn parse_config_with_legacy(contents: &str) -> (Config, Option<LegacyLocation>) {
-    let parsed: ConfigWithLegacy = match toml::from_str(contents) {
-        Ok(cfg) => cfg,
-        Err(_) => return (Config::default(), None),
-    };
+fn parse_config_with_legacy(
+    contents: &str,
+) -> Result<(Config, Option<LegacyLocation>), toml::de::Error> {
+    let parsed: ConfigWithLegacy = toml::from_str(contents)?;
 
     let cfg = Config {
         units: parsed.units,
@@ -150,7 +149,7 @@ fn parse_config_with_legacy(contents: &str) -> (Config, Option<LegacyLocation>) 
         dashboard: parsed.dashboard,
     };
 
-    (cfg, parsed.location)
+    Ok((cfg, parsed.location))
 }
 
 /// Resolved dashboard configuration with defaults applied
@@ -174,18 +173,14 @@ impl DashboardConfigResolved {
                 } else {
                     c.forecast_hours
                 },
-                forecast_days: if c.forecast_days == 0 {
-                    defaults.forecast_days
-                } else {
-                    c.forecast_days
-                },
+                forecast_days: c.forecast_days.max(5).min(12),
                 window_width: c.window_width.unwrap_or(500),
                 window_height: c.window_height.unwrap_or(700),
             },
             None => DashboardConfigResolved {
                 show_hourly_graph: defaults.show_hourly_graph,
                 forecast_hours: defaults.forecast_hours,
-                forecast_days: defaults.forecast_days,
+                forecast_days: defaults.forecast_days.max(5).min(12),
                 window_width: 500,
                 window_height: 700,
             },
@@ -420,13 +415,27 @@ pub fn load_key() -> Option<String> {
 pub fn load_config() -> Config {
     let home = match env::var("HOME") {
         Ok(h) => h,
-        Err(_) => return Config::default(),
+        Err(e) => {
+            eprintln!("Error getting HOME environment variable: {}", e);
+            return Config::default();
+        }
     };
     let path = PathBuf::from(&home).join(CONFIG_FILE);
 
     let (mut config, legacy_location) = match fs::read_to_string(&path) {
-        Ok(contents) => parse_config_with_legacy(&contents),
-        Err(_) => (Config::default(), None),
+        Ok(contents) => match parse_config_with_legacy(&contents) {
+            Ok((cfg, legacy)) => (cfg, legacy),
+            Err(e) => {
+                eprintln!("Error parsing config file {}: {}", path.display(), e);
+                (Config::default(), None)
+            }
+        },
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Error reading config file {}: {}", path.display(), e);
+            }
+            (Config::default(), None)
+        }
     };
 
     let mut changed = false;
@@ -434,6 +443,7 @@ pub fn load_config() -> Config {
     changed |= migrate_legacy_location_section(&mut config, legacy_location);
 
     if changed {
+        // Errors here are already logged by write_config_file
         let _ = write_config_file(&path, &config);
     }
 

@@ -94,15 +94,17 @@ pub fn create_sun_widget(sunrise: i64, sunset: i64, current: i64, tz: i64) -> Dr
         let set_text = fmt_time(sunset, tz, "%H:%M");
 
         // Rise Label (Left)
-        let ext_r = ctx.text_extents(&rise_text).unwrap();
-        // Position near the start of arc
-        ctx.move_to(center_x - radius - ext_r.width() / 2.0, center_y + 20.0);
-        let _ = ctx.show_text(&rise_text);
+        if let Ok(ext_r) = ctx.text_extents(&rise_text) {
+            // Position near the start of arc
+            ctx.move_to(center_x - radius - ext_r.width() / 2.0, center_y + 20.0);
+            let _ = ctx.show_text(&rise_text);
+        }
 
         // Set Label (Right)
-        let ext_s = ctx.text_extents(&set_text).unwrap();
-        ctx.move_to(center_x + radius - ext_s.width() / 2.0, center_y + 20.0);
-        let _ = ctx.show_text(&set_text);
+        if let Ok(ext_s) = ctx.text_extents(&set_text) {
+            ctx.move_to(center_x + radius - ext_s.width() / 2.0, center_y + 20.0);
+            let _ = ctx.show_text(&set_text);
+        }
 
         // "Horizon" labels
         ctx.set_font_size(10.0);
