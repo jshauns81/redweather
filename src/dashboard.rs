@@ -12,11 +12,10 @@ use std::rc::Rc;
 
 use crate::config::{load_config, Config, DashboardConfigResolved, Units};
 use crate::gauges::{create_arc_gauge, create_compass_gauge};
-use crate::graph::create_hourly_graph;
+use crate::graph::{create_hourly_graph_plot, create_hourly_y_axis, YAxisMetrics};
 use crate::ui::show_location_dialog;
 use crate::utils::{deg_to_dir, fmt_time, is_night, moon_phase_icon, pick_icon};
 use crate::weather::{fetch_weather_for_loc, resolve_location, ApiResponse, Location, WeatherDesc};
-
 // Constants
 const MAX_UVI: f64 = 11.0;
 const SPINNER_SIZE: i32 = 64;
@@ -253,6 +252,11 @@ fn build_ui(
     let main_scroll = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
+    
+    if let Some(max_h) = dashboard_config.max_window_height {
+        main_scroll.set_max_content_height(max_h);
+    }
+
     window.set_child(Some(&main_scroll));
 
     // Initial Draw
@@ -500,24 +504,43 @@ fn build_hourly_forecast_section(
     hourly_label.set_halign(gtk::Align::Start);
     section_box.append(&hourly_label);
 
+    let hourly_container = GtkBox::new(Orientation::Horizontal, 0);
+    hourly_container.add_css_class("panel-card"); // Apply card style to whole container
+    hourly_container.set_vexpand(false); // Fixed height
+
+    // Calculate shared Y-axis metrics
+    let y_metrics_rc = Rc::new(RefCell::new(YAxisMetrics::new(
+        &data.hourly,
+        260.0, // Fixed height for graph
+        dashboard_config.forecast_hours,
+    )));
+
+    // Create fixed Y-axis DrawingArea
+    let y_axis_area = create_hourly_y_axis(
+        y_metrics_rc.clone(),
+    );
+    y_axis_area.set_vexpand(false);
+    hourly_container.append(&y_axis_area);
+
     let hourly_scroll = ScrolledWindow::builder()
         .vscrollbar_policy(gtk::PolicyType::Never)
-        // .min_content_height(200) // Removed fixed min height
+        .hscrollbar_policy(gtk::PolicyType::External) // Hide scrollbar but allow scrolling
         .build();
+    hourly_scroll.set_vexpand(false);
     enable_drag_scroll(&hourly_scroll);
 
     if dashboard_config.show_hourly_graph {
-        // Graph View
-        let graph = create_hourly_graph(
-            &data.hourly,
+        // Graph View (Plot only)
+        let graph_plot_area = create_hourly_graph_plot(
+            Rc::new(data.hourly.clone()),
             dashboard_config.forecast_hours,
             data.timezone_offset as i32,
+            y_metrics_rc.clone(),
         );
-        graph.add_css_class("hourly-graph-canvas");
-        let frame = GtkBox::new(Orientation::Vertical, 0);
-        frame.add_css_class("panel-card");
-        frame.append(&graph);
-        hourly_scroll.set_child(Some(&frame));
+        graph_plot_area.add_css_class("hourly-graph-canvas");
+        // graph_plot_area already has vexpand(false) from graph.rs
+        
+        hourly_scroll.set_child(Some(&graph_plot_area));
     } else {
         // Card List View
         let hourly_box = GtkBox::new(Orientation::Horizontal, 15);
@@ -579,13 +602,14 @@ fn build_hourly_forecast_section(
             card.append(&temp_lbl);
             hourly_box.append(&card);
         }
-        let frame = GtkBox::new(Orientation::Vertical, 0);
-        frame.add_css_class("panel-card");
-        frame.append(&hourly_box);
-        hourly_scroll.set_child(Some(&frame));
+        hourly_scroll.set_child(Some(&hourly_box));
     }
+    
+    // Wrap ScrolledWindow with shadows
+    let scroll_with_shadows = wrap_with_shadows(&hourly_scroll);
+    hourly_container.append(&scroll_with_shadows);
 
-    section_box.append(&hourly_scroll);
+    section_box.append(&hourly_container);
     section_box
 }
 
@@ -601,12 +625,14 @@ fn build_daily_forecast_section(
     daily_label.set_halign(gtk::Align::Start);
     section_box.append(&daily_label);
 
-    // Scrollable container for cards (horizontal drag/scroll like hourly)
+    // Scrollable container for cards
     let daily_scroll = ScrolledWindow::builder()
         .vscrollbar_policy(gtk::PolicyType::Never)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::External)
         .min_content_height(180)
         .build();
+    daily_scroll.set_vexpand(false);
+    daily_scroll.set_valign(gtk::Align::Start);
     enable_drag_scroll(&daily_scroll);
 
     let daily_box = GtkBox::new(Orientation::Horizontal, 12);
@@ -640,7 +666,7 @@ fn build_daily_forecast_section(
     }
 
     daily_scroll.set_child(Some(&daily_box));
-    section_box.append(&daily_scroll);
+    section_box.append(&wrap_with_shadows(&daily_scroll));
     section_box
 }
 
@@ -790,6 +816,62 @@ fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str, detail: &st
     card
 }
 
+fn wrap_with_shadows(scroll: &ScrolledWindow) -> gtk::Overlay {
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(scroll));
+
+    // Left Shadow (Start)
+    let start_shadow = GtkBox::new(Orientation::Horizontal, 0);
+    start_shadow.add_css_class("scroll-shadow-start");
+    start_shadow.set_halign(gtk::Align::Start);
+    start_shadow.set_width_request(40); // Deep tunnel
+    start_shadow.set_can_target(false);
+
+    // Right Shadow (End)
+    let end_shadow = GtkBox::new(Orientation::Horizontal, 0);
+    end_shadow.add_css_class("scroll-shadow-end");
+    end_shadow.set_halign(gtk::Align::End);
+    end_shadow.set_width_request(40);
+    end_shadow.set_can_target(false);
+
+    overlay.add_overlay(&start_shadow);
+    overlay.add_overlay(&end_shadow);
+
+    // Scroll Logic
+    let adj = scroll.hadjustment();
+    let start_weak = start_shadow.downgrade();
+    let end_weak = end_shadow.downgrade();
+
+    // Closure to update visibility
+    let update_shadows = Rc::new(move |adj: &gtk::Adjustment| {
+        let val = adj.value();
+        let lower = adj.lower();
+        let upper = adj.upper();
+        let page_size = adj.page_size();
+        let max = upper - page_size;
+
+        // Show start shadow if we have scrolled past the start
+        if let Some(s) = start_weak.upgrade() {
+            // Use a threshold to avoid flickering at 0
+            s.set_opacity(if val > lower + 1.0 { 1.0 } else { 0.0 });
+        }
+
+        // Show end shadow if we are not yet at the end
+        // Note: if content < page_size, max might be <= lower.
+        if let Some(e) = end_weak.upgrade() {
+            e.set_opacity(if val < max - 1.0 { 1.0 } else { 0.0 });
+        }
+    });
+
+    let cb1 = update_shadows.clone();
+    adj.connect_value_changed(move |a| cb1(a));
+
+    let cb2 = update_shadows.clone();
+    adj.connect_changed(move |a| cb2(a));
+
+    overlay
+}
+
 fn create_section_divider() -> Separator {
     let sep = Separator::new(Orientation::Horizontal);
     sep.add_css_class("section-divider");
@@ -821,6 +903,7 @@ fn enable_drag_scroll(scroll: &ScrolledWindow) {
         }
     });
 
+    drag.set_propagation_phase(gtk::PropagationPhase::Capture);
     scroll.add_controller(drag);
 }
 
@@ -1094,13 +1177,43 @@ const STYLE_CSS: &str = r#"
 
     scrolledwindow { background-color: transparent; }
 
-    scrollbar { background-color: transparent; }
+    scrolledwindow undershoot.top {
+        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+    }
+    scrolledwindow undershoot.bottom {
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+    }
+    scrolledwindow undershoot.start {
+        background: linear-gradient(to right, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+    }
+    scrolledwindow undershoot.end {
+        background: linear-gradient(to left, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+    }
+
+    scrollbar {
+        background-color: transparent;
+        border: none;
+    }
+
+    scrollbar.vertical { min-width: 8px; }
+    scrollbar.horizontal { min-height: 8px; }
 
     scrollbar slider {
-        min-width: 0.5rem;
-        min-height: 0.5rem;
-        border-radius: 0.25rem;
+        min-width: 4px;
+        min-height: 4px;
+        margin: 2px;
+        border-radius: 4px;
         background-color: #334155;
+    }
+
+    .scroll-shadow-start {
+        background: linear-gradient(to right, rgba(11, 15, 31, 0.95) 0%, rgba(11, 15, 31, 0) 100%);
+        transition: opacity 0.25s ease-out;
+    }
+
+    .scroll-shadow-end {
+        background: linear-gradient(to left, rgba(11, 15, 31, 0.95) 0%, rgba(11, 15, 31, 0) 100%);
+        transition: opacity 0.25s ease-out;
     }
 
     scrollbar slider:hover { background-color: #475569; }
@@ -1122,6 +1235,7 @@ const STYLE_CSS: &str = r#"
         min-width: 6rem;  
         min-height: 8rem; 
         margin-bottom: 0.25rem;
+        margin-top: 0.5rem;
         
         border: 0.07rem solid rgba(255,255,255,0.07);
         

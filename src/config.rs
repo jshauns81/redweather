@@ -70,6 +70,7 @@ pub struct DashboardConfig {
     pub forecast_days: usize,
     pub window_width: Option<i32>,
     pub window_height: Option<i32>,
+    pub max_window_height: Option<i32>,
 }
 
 impl Default for DashboardConfig {
@@ -80,6 +81,7 @@ impl Default for DashboardConfig {
             forecast_days: 5,
             window_width: None,
             window_height: None,
+            max_window_height: None,
         }
     }
 }
@@ -160,6 +162,7 @@ pub struct DashboardConfigResolved {
     pub forecast_days: usize,
     pub window_width: i32,
     pub window_height: i32,
+    pub max_window_height: Option<i32>,
 }
 
 impl DashboardConfigResolved {
@@ -176,6 +179,7 @@ impl DashboardConfigResolved {
                 forecast_days: c.forecast_days.max(5).min(12),
                 window_width: c.window_width.unwrap_or(500),
                 window_height: c.window_height.unwrap_or(700),
+                max_window_height: c.max_window_height,
             },
             None => DashboardConfigResolved {
                 show_hourly_graph: defaults.show_hourly_graph,
@@ -183,6 +187,7 @@ impl DashboardConfigResolved {
                 forecast_days: defaults.forecast_days.max(5).min(12),
                 window_width: 500,
                 window_height: 700,
+                max_window_height: None,
             },
         }
     }
