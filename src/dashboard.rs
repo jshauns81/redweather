@@ -31,6 +31,28 @@ const UVI_VERY_HIGH: f64 = 8.0;
 const UVI_HIGH: f64 = 6.0;
 const UVI_MODERATE: f64 = 3.0;
 
+/// Helper to get color based on temperature
+fn get_temp_color(temp: f64, units: Units) -> &'static str {
+    let temp_f = if units == Units::Metric {
+        temp * 9.0 / 5.0 + 32.0 // Convert to F for rules
+    } else {
+        temp
+    };
+
+    if temp_f < 32.0 {
+        "#7dd3fc" // cold cyan
+    } else if temp_f < 50.0 {
+        "#818cf8" // cool indigo
+    } else if temp_f < 70.0 {
+        "#fbbf24" // mild yellow
+    } else if temp_f < 85.0 {
+        "#f97316" // warm orange
+    } else {
+        "#ef4444" // hot red-orange
+    }
+}
+
+
 /// Spawns an async task to fetch weather data and update the UI
 fn spawn_weather_fetch(
     api_key: Rc<String>,
@@ -332,13 +354,14 @@ fn build_current_weather_section(data: &ApiResponse, units: Units) -> GtkBox {
         Units::Imperial => ("°F", "mph"),
         Units::Metric => ("°C", "m/s"),
     };
-    let feels_like = data.current.feels_like.unwrap_or(data.current.temp).round();
-    let temp_label = Label::new(Some(&format!(
-        "{:.0}{}",
-        data.current.temp.round(),
+    let current_temp = data.current.temp.round();
+    let temp_label = Label::new(None); // Set markup later
+    temp_label.set_markup(&format!(
+        "<span foreground='{}'>{:.0}{}</span>",
+        get_temp_color(data.current.temp, units),
+        current_temp,
         temp_unit
-    )));
-    temp_label.add_css_class("hero-temp");
+    ));
 
     let desc_text = current_desc
         .main
@@ -348,6 +371,7 @@ fn build_current_weather_section(data: &ApiResponse, units: Units) -> GtkBox {
     let desc_label = Label::new(Some(&desc_text));
     desc_label.add_css_class("hero-desc");
 
+    let feels_like = data.current.feels_like.unwrap_or(data.current.temp).round();
     let feels_label = Label::new(Some(&format!("Feels like {:.0}{}", feels_like, temp_unit)));
     feels_label.add_css_class("hero-feels");
 
@@ -504,9 +528,9 @@ fn build_hourly_forecast_section(
     hourly_label.set_halign(gtk::Align::Start);
     section_box.append(&hourly_label);
 
-    let hourly_container = GtkBox::new(Orientation::Horizontal, 0);
-    hourly_container.add_css_class("panel-card"); // Apply card style to whole container
-    hourly_container.set_vexpand(false); // Fixed height
+    let hourly_outer_container = GtkBox::new(Orientation::Horizontal, 0);
+    hourly_outer_container.add_css_class("panel-card"); // Apply card style to whole container
+    hourly_outer_container.set_vexpand(false); // Fixed height
 
     // Calculate shared Y-axis metrics
     let y_metrics_rc = Rc::new(RefCell::new(YAxisMetrics::new(
@@ -519,14 +543,14 @@ fn build_hourly_forecast_section(
     let y_axis_area = create_hourly_y_axis(
         y_metrics_rc.clone(),
     );
-    y_axis_area.set_vexpand(false);
-    hourly_container.append(&y_axis_area);
+    y_axis_area.set_vexpand(false); // Fixed height
+    hourly_outer_container.append(&y_axis_area);
 
     let hourly_scroll = ScrolledWindow::builder()
         .vscrollbar_policy(gtk::PolicyType::Never)
         .hscrollbar_policy(gtk::PolicyType::External) // Hide scrollbar but allow scrolling
         .build();
-    hourly_scroll.set_vexpand(false);
+    hourly_scroll.set_vexpand(false); // Fixed height
     enable_drag_scroll(&hourly_scroll);
 
     if dashboard_config.show_hourly_graph {
@@ -538,13 +562,12 @@ fn build_hourly_forecast_section(
             y_metrics_rc.clone(),
         );
         graph_plot_area.add_css_class("hourly-graph-canvas");
-        // graph_plot_area already has vexpand(false) from graph.rs
+        // graph_plot_area already has vexpand(false) from graph.rs (create_hourly_graph_plot)
         
         hourly_scroll.set_child(Some(&graph_plot_area));
     } else {
         // Card List View
         let hourly_box = GtkBox::new(Orientation::Horizontal, 15);
-        hourly_box.set_margin_bottom(10);
 
         let mut last_day: Option<i64> = None;
         for h in data.hourly.iter().take(dashboard_config.forecast_hours) {
@@ -604,12 +627,13 @@ fn build_hourly_forecast_section(
         }
         hourly_scroll.set_child(Some(&hourly_box));
     }
-    
-    // Wrap ScrolledWindow with shadows
-    let scroll_with_shadows = wrap_with_shadows(&hourly_scroll);
-    hourly_container.append(&scroll_with_shadows);
 
-    section_box.append(&hourly_container);
+    // Add tunnel effect class and wrap with dark overlays
+    hourly_scroll.add_css_class("tunnel-scroll");
+    let hourly_with_tunnel = wrap_with_tunnel(&hourly_scroll);
+    hourly_outer_container.append(&hourly_with_tunnel);
+
+    section_box.append(&hourly_outer_container);
     section_box
 }
 
@@ -617,6 +641,7 @@ fn build_hourly_forecast_section(
 fn build_daily_forecast_section(
     data: &ApiResponse,
     dashboard_config: &DashboardConfigResolved,
+    units: Units,
 ) -> GtkBox {
     let section_box = GtkBox::new(Orientation::Vertical, 10);
 
@@ -636,7 +661,6 @@ fn build_daily_forecast_section(
     enable_drag_scroll(&daily_scroll);
 
     let daily_box = GtkBox::new(Orientation::Horizontal, 12);
-    daily_box.set_margin_bottom(10);
     daily_box.set_margin_start(2);
     daily_box.set_margin_end(2);
 
@@ -661,12 +685,17 @@ fn build_daily_forecast_section(
         let lo = d.temp.min.unwrap_or(0.0).round();
         let pop = d.pop.unwrap_or(0.0);
 
-        let card = create_tokyo_forecast_card(&day_str, &icon_str, hi, lo, pop, i);
+        let card = create_tokyo_forecast_card(&day_str, &icon_str, hi, lo, pop, i, units); // Pass units here
         daily_box.append(&card);
     }
 
+    daily_box.set_vexpand(false); // Ensure the box holding cards doesn't stretch
+    daily_box.set_valign(gtk::Align::Start); // Align cards to the top
     daily_scroll.set_child(Some(&daily_box));
-    section_box.append(&wrap_with_shadows(&daily_scroll));
+
+    // Add tunnel effect class and wrap with dark overlays
+    daily_scroll.add_css_class("tunnel-scroll");
+    section_box.append(&wrap_with_tunnel(&daily_scroll));
     section_box
 }
 
@@ -762,7 +791,7 @@ fn refresh_content(
     vbox.append(&build_hourly_forecast_section(data, &dashboard_config));
 
     // Forecast stays scrollable horizontally; omit extra divider to save vertical space
-    vbox.append(&build_daily_forecast_section(data, &dashboard_config));
+    vbox.append(&build_daily_forecast_section(data, &dashboard_config, units));
 
     scroll.set_child(Some(&vbox));
 }
@@ -816,57 +845,56 @@ fn create_gauge_card(title: &str, gauge: DrawingArea, caption: &str, detail: &st
     card
 }
 
-fn wrap_with_shadows(scroll: &ScrolledWindow) -> gtk::Overlay {
+fn wrap_with_tunnel(scroll: &ScrolledWindow) -> gtk::Overlay {
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(scroll));
+    overlay.set_vexpand(false);
 
-    // Left Shadow (Start)
-    let start_shadow = GtkBox::new(Orientation::Horizontal, 0);
-    start_shadow.add_css_class("scroll-shadow-start");
-    start_shadow.set_halign(gtk::Align::Start);
-    start_shadow.set_width_request(40); // Deep tunnel
-    start_shadow.set_can_target(false);
+    // Left tunnel entrance (dark) - only visible when scrolled
+    let left_tunnel = GtkBox::new(Orientation::Horizontal, 0);
+    left_tunnel.add_css_class("tunnel-entrance-left");
+    left_tunnel.set_halign(gtk::Align::Start);
+    left_tunnel.set_width_request(80);
+    left_tunnel.set_can_target(false);
+    left_tunnel.set_opacity(0.0); // Hidden by default
 
-    // Right Shadow (End)
-    let end_shadow = GtkBox::new(Orientation::Horizontal, 0);
-    end_shadow.add_css_class("scroll-shadow-end");
-    end_shadow.set_halign(gtk::Align::End);
-    end_shadow.set_width_request(40);
-    end_shadow.set_can_target(false);
+    // Right tunnel entrance (dark) - only visible when more content exists
+    let right_tunnel = GtkBox::new(Orientation::Horizontal, 0);
+    right_tunnel.add_css_class("tunnel-entrance-right");
+    right_tunnel.set_halign(gtk::Align::End);
+    right_tunnel.set_width_request(80);
+    right_tunnel.set_can_target(false);
 
-    overlay.add_overlay(&start_shadow);
-    overlay.add_overlay(&end_shadow);
+    overlay.add_overlay(&left_tunnel);
+    overlay.add_overlay(&right_tunnel);
 
-    // Scroll Logic
+    // Dynamic visibility based on scroll position
     let adj = scroll.hadjustment();
-    let start_weak = start_shadow.downgrade();
-    let end_weak = end_shadow.downgrade();
+    let left_weak = left_tunnel.downgrade();
+    let right_weak = right_tunnel.downgrade();
 
-    // Closure to update visibility
-    let update_shadows = Rc::new(move |adj: &gtk::Adjustment| {
+    let update_tunnels = Rc::new(move |adj: &gtk::Adjustment| {
         let val = adj.value();
         let lower = adj.lower();
         let upper = adj.upper();
         let page_size = adj.page_size();
         let max = upper - page_size;
 
-        // Show start shadow if we have scrolled past the start
-        if let Some(s) = start_weak.upgrade() {
-            // Use a threshold to avoid flickering at 0
-            s.set_opacity(if val > lower + 1.0 { 1.0 } else { 0.0 });
+        // Show left tunnel only if we've scrolled past the start
+        if let Some(left) = left_weak.upgrade() {
+            left.set_opacity(if val > lower + 1.0 { 1.0 } else { 0.0 });
         }
 
-        // Show end shadow if we are not yet at the end
-        // Note: if content < page_size, max might be <= lower.
-        if let Some(e) = end_weak.upgrade() {
-            e.set_opacity(if val < max - 1.0 { 1.0 } else { 0.0 });
+        // Show right tunnel only if there's more content to the right
+        if let Some(right) = right_weak.upgrade() {
+            right.set_opacity(if val < max - 1.0 { 1.0 } else { 0.0 });
         }
     });
 
-    let cb1 = update_shadows.clone();
+    let cb1 = update_tunnels.clone();
     adj.connect_value_changed(move |a| cb1(a));
 
-    let cb2 = update_shadows.clone();
+    let cb2 = update_tunnels.clone();
     adj.connect_changed(move |a| cb2(a));
 
     overlay
@@ -914,6 +942,7 @@ fn create_tokyo_forecast_card(
     lo: f64,
     pop: f64,
     index: usize,
+    units: Units, // Pass units here
 ) -> GtkBox {
     let card = GtkBox::new(Orientation::Vertical, 0);
     card.add_css_class("tokyo-card");
@@ -942,11 +971,8 @@ fn create_tokyo_forecast_card(
     center_box.append(&icon_lbl);
 
     // Temperatures with Pango markup
-    // High: Golden orange (#fbbf24), larger/bolder
-    // Low: Cool blue (#93c5fd), smaller
-    // Slash: thin/light (#93c5fd)
-    let hi_color = "#fbbf24";
-    let lo_color = "#93c5fd";
+    let hi_color = get_temp_color(hi, units); // Dynamic high temp color
+    let lo_color = "#93c5fd"; // Fixed low temp color
 
     // We rely on relative sizes (x-large, medium) which scale with the widget's font size (set by CSS on window)
     let markup = format!(
@@ -1040,12 +1066,12 @@ const STYLE_CSS: &str = r#"
         background: rgba(255, 255, 255, 0.015);
     }
 
-    .hero-icon { font-size: 3.4rem; color: #e6edff; }
+    .hero-icon { font-size: 3.4rem; color: #e5e7eb; } /* Light gray/white */
     
-    .hero-temp {
+    .hero-temp { /* Color now dynamic via markup */
         font-size: 3.2rem;
         font-weight: 780;
-        color: #f5ad2e;
+        /* color: #f5ad2e; */
         letter-spacing: -0.016rem;
     }
     
@@ -1068,12 +1094,16 @@ const STYLE_CSS: &str = r#"
         padding-bottom: 0.12rem;
     }
     
-    .gauge-card {
+    .gauge-item {
         background: linear-gradient(180deg, #10172a 0%, #0c1224 100%);
         padding: 0.65rem 0.7rem 0.8rem;
         border-radius: 0.9rem;
         border: 0.065rem solid rgba(255, 255, 255, 0.06);
         min-width: 5.4rem;
+        box-shadow:
+            0 0.25rem 0.5rem rgba(0, 0, 0, 0.4),
+            0 0.125rem 0.25rem rgba(0, 0, 0, 0.3),
+            inset 0 0.0625rem 0 rgba(255, 255, 255, 0.05);
     }
     
     .detail-title { font-size: 0.75rem; color: #9ca3af; }
@@ -1115,15 +1145,18 @@ const STYLE_CSS: &str = r#"
         border-radius: 0.75rem;
         min-width: 3.75rem;
         border: 0.0625rem solid rgba(255, 255, 255, 0.06);
+        box-shadow:
+            0 0.25rem 0.5rem rgba(0, 0, 0, 0.3),
+            0 0.125rem 0.25rem rgba(0, 0, 0, 0.2);
     }
     
     .forecast-time { font-size: 0.75rem; color: #9ca3af; }
     
-    .forecast-icon { font-size: 1.5rem; margin-top: 0.3125rem; margin-bottom: 0.3125rem; }
+    .forecast-icon { font-size: 1.5rem; color: #e5e7eb; margin-top: 0.3125rem; margin-bottom: 0.3125rem; } /* Light gray/white */
     
     .forecast-temp { font-weight: bold; }
 
-    .forecast-pop { font-size: 0.6875rem; color: #38bdf8; margin-top: 0.25rem; }
+    .forecast-pop { font-size: 0.6875rem; color: #22d3ee; margin-top: 0.25rem; } /* Precip text color */
 
     .day-separator { background-color: rgba(255, 255, 255, 0.08); min-width: 0.125rem; }
     
@@ -1145,26 +1178,26 @@ const STYLE_CSS: &str = r#"
         margin-bottom: 0.375rem;
     }
 
-    .daily-card-icon { font-size: 3rem; margin: 0.5rem 0; }
+    .daily-card-icon { font-size: 3rem; color: #e5e7eb; margin: 0.5rem 0; } /* Light gray/white */
 
     .daily-card-temps {
         font-size: 1.125rem;
         font-weight: 700;
-        color: #e5e7eb;
+        /* color: #e5e7eb; */ /* Color now dynamic via markup */
         margin-top: 0.375rem;
         margin-bottom: 0.375rem;
     }
 
     .daily-card-pop {
         font-size: 0.8125rem;
-        color: #38bdf8;
+        color: #22d3ee; /* Precip text color */
         font-weight: 700;
         margin-top: 0.375rem;
     }
 
     .daily-card-pop-high {
         font-size: 0.8125rem;
-        color: #38bdf8;
+        color: #22d3ee; /* Precip text color */
         font-weight: 800;
         margin-top: 0.375rem;
     }
@@ -1206,25 +1239,45 @@ const STYLE_CSS: &str = r#"
         background-color: #334155;
     }
 
-    .scroll-shadow-start {
-        background: linear-gradient(to right, rgba(11, 15, 31, 0.95) 0%, rgba(11, 15, 31, 0) 100%);
-        transition: opacity 0.25s ease-out;
-    }
-
-    .scroll-shadow-end {
-        background: linear-gradient(to left, rgba(11, 15, 31, 0.95) 0%, rgba(11, 15, 31, 0) 100%);
-        transition: opacity 0.25s ease-out;
-    }
-
     scrollbar slider:hover { background-color: #475569; }
 
     scrollbar slider:active { background-color: #64748b; }
 
+    /* Tunnel Effect - Cards fade into darkness at edges */
+    /* Note: GTK CSS doesn't support mask-image. Use undershoot styling instead. */
+    .tunnel-scroll {
+        /* Removed unsupported mask-image properties */
+    }
+
+    /* Tunnel entrance darkness overlays */
+    .tunnel-entrance-left {
+        background: linear-gradient(to right,
+            rgba(0, 0, 0, 0.85) 0%,
+            rgba(0, 0, 0, 0.6) 40%,
+            transparent 100%);
+        pointer-events: none;
+        transition: opacity 0.25s ease-out;
+    }
+
+    .tunnel-entrance-right {
+        background: linear-gradient(to left,
+            rgba(0, 0, 0, 0.85) 0%,
+            rgba(0, 0, 0, 0.6) 40%,
+            transparent 100%);
+        pointer-events: none;
+        transition: opacity 0.25s ease-out;
+    }
+
     .panel-card {
-        background: linear-gradient(180deg, rgba(22, 30, 50, 0.82) 0%, rgba(14, 19, 35, 0.94) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 0.95rem;
-        padding: 0.55rem 0.55rem 0.75rem;
+        background: linear-gradient(180deg, rgba(14, 20, 36, 0.96) 0%, rgba(9, 13, 26, 0.96) 40%, rgba(7, 10, 20, 0.98) 100%);
+        border: 1px solid rgba(122, 162, 247, 0.20);
+        border-radius: 1rem;
+        padding: 0.7rem 0.75rem 0.9rem;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.10),
+            inset 0 -10px 18px rgba(0, 0, 0, 0.38),
+            inset 0 0 0 1px rgba(0, 0, 0, 0.25),
+            0 10px 28px rgba(0, 0, 0, 0.32);
     }
 
     /* TOKYO NIGHT FORECAST CARD STYLES */
@@ -1232,47 +1285,48 @@ const STYLE_CSS: &str = r#"
         background: linear-gradient(180deg, #0f172a 0%, #0b1225 55%, #0a0f21 100%);
         border-radius: 0.78rem;
         padding: 0.22rem 0.18rem 0.3rem;
-        min-width: 6rem;  
-        min-height: 8rem; 
-        margin-bottom: 0.25rem;
-        margin-top: 0.5rem;
-        
+        min-width: 6rem;
+        min-height: 8rem;
+
         border: 0.07rem solid rgba(255,255,255,0.07);
-        
+        box-shadow:
+            0 0.3rem 0.6rem rgba(0, 0, 0, 0.35),
+            0 0.15rem 0.3rem rgba(0, 0, 0, 0.25);
+
         transition: min-height 0.2s ease-out;
     }
 
-    /* Neon Gradient Borders (Purple/Blue) */
-    .tokyo-card-neon-0 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0 0.35rem rgba(139, 92, 246, 0.35); }
-    .tokyo-card-neon-1 { border-bottom: 0.18rem solid #6366f1; box-shadow: 0 0 0.35rem rgba(99, 102, 241, 0.35); }
-    .tokyo-card-neon-2 { border-bottom: 0.18rem solid #3b82f6; box-shadow: 0 0 0.35rem rgba(59, 130, 246, 0.35); }
-    .tokyo-card-neon-3 { border-bottom: 0.18rem solid #22d3ee; box-shadow: 0 0 0.35rem rgba(34, 211, 238, 0.35); }
-    .tokyo-card-neon-4 { border-bottom: 0.18rem solid #0ea5e9; box-shadow: 0 0 0.35rem rgba(14, 165, 233, 0.35); }
-    .tokyo-card-neon-5 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0 0.35rem rgba(139, 92, 246, 0.35); }
+    /* Neon Gradient Borders (Purple/Blue) - includes base shadow + neon glow */
+    .tokyo-card-neon-0 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(139, 92, 246, 0.35); }
+    .tokyo-card-neon-1 { border-bottom: 0.18rem solid #6366f1; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(99, 102, 241, 0.35); }
+    .tokyo-card-neon-2 { border-bottom: 0.18rem solid #3b82f6; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(59, 130, 246, 0.35); }
+    .tokyo-card-neon-3 { border-bottom: 0.18rem solid #22d3ee; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(34, 211, 238, 0.35); }
+    .tokyo-card-neon-4 { border-bottom: 0.18rem solid #0ea5e9; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(14, 165, 233, 0.35); }
+    .tokyo-card-neon-5 { border-bottom: 0.18rem solid #8b5cf6; box-shadow: 0 0.3rem 0.6rem rgba(0, 0, 0, 0.35), 0 0.15rem 0.3rem rgba(0, 0, 0, 0.25), 0 0 0.35rem rgba(139, 92, 246, 0.35); }
 
     .tokyo-day {
         font-family: "Cantarell", "Noto Sans", Sans;
         font-weight: 700;
         font-size: 0.8125rem;
-        color: #d2dcff;
+        color: #e5e7eb;
         letter-spacing: 0.018rem;
         margin-top: 0.625rem;
         margin-left: 0.625rem;
     }
 
-    .tokyo-icon { font-size: 2.4rem; margin-bottom: 0.35rem; }
+    .tokyo-icon { font-size: 2.4rem; color: #e5e7eb; margin-bottom: 0.35rem; }
 
     .tokyo-pop-box { margin-bottom: 0.625rem; margin-left: 0.625rem; }
 
     .tokyo-pop-icon {
         font-size: 0.75rem;
-        color: #38bdf8;
+        color: #22d3ee;
         margin-right: 0.25rem;
     }
 
     .tokyo-pop-text {
         font-size: 0.75rem;
-        color: #38bdf8;
+        color: #22d3ee;
         font-weight: 700;
     }
 

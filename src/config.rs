@@ -16,7 +16,7 @@ pub const CONFIG_FILE: &str = ".config/redweather/config.toml";
 const HOME_LOCATION_FILE: &str = ".config/redweather/home_location.json";
 
 /// Unit system for temperature and speed
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Units {
     Imperial,

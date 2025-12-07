@@ -175,8 +175,7 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
                 let pop = h.pop.unwrap_or(0.0) * 100.0;
                 let desc = h.weather.get(0).and_then(|w| w.description.as_deref()).unwrap_or("");
                 
-                let txt = format!("<b>{}</b>\n{:.0}°\nPrecip: {:.0}%
-<i>{}</i>", time, temp, pop, desc);
+                let txt = format!("<b>{}</b>\n{:.0}°\nPrecip: {:.0}%\n<i>{}</i>", time, temp, pop, desc);
                 tooltip.set_markup(Some(&txt));
                 return true;
             }
@@ -198,8 +197,8 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
         let y_metrics = draw_y_metrics.borrow(); // Access shared Y-axis metrics
 
         // Colors
-        let bg_top = (0x10 as f64 / 255.0, 0x14 as f64 / 255.0, 0x2a as f64 / 255.0);
-        let bg_bottom = (0x0c as f64 / 255.0, 0x11 as f64 / 255.0, 0x23 as f64 / 255.0);
+        // let bg_top = (0x10 as f64 / 255.0, 0x14 as f64 / 255.0, 0x2a as f64 / 255.0);
+        // let bg_bottom = (0x0c as f64 / 255.0, 0x11 as f64 / 255.0, 0x23 as f64 / 255.0);
         let grid_color = (56.0 / 255.0, 64.0 / 255.0, 100.0 / 255.0, 0.16);
         let time_color = (0.58, 0.66, 0.87);
         let temp_line = (0.133, 0.827, 0.933);
@@ -224,12 +223,12 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
 
         // --- PHASE 1: STATIC BACKGROUND (Cached) ---
         let draw_static = |c: &cairo::Context| {
-            // Background Gradient
-            let bg_gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height);
-            bg_gradient.add_color_stop_rgb(0.0, bg_top.0, bg_top.1, bg_top.2);
-            bg_gradient.add_color_stop_rgb(1.0, bg_bottom.0, bg_bottom.1, bg_bottom.2);
-            let _ = c.set_source(&bg_gradient);
-            let _ = c.paint();
+            // Background Gradient (removed for transparency)
+            // let bg_gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height);
+            // bg_gradient.add_color_stop_rgb(0.0, bg_top.0, bg_top.1, bg_top.2);
+            // bg_gradient.add_color_stop_rgb(1.0, bg_bottom.0, bg_bottom.1, bg_bottom.2);
+            // let _ = c.set_source(&bg_gradient);
+            // let _ = c.paint();
 
             if count == 0 {
                 c.set_source_rgb(1.0, 1.0, 1.0);
@@ -305,11 +304,11 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
 
             // Day-change markers
             for i in 1..count {
-                let day_prev = (data_for_draw[i - 1].dt + tz_offset as i64) / 86_400;
-                let day_curr = (data_for_draw[i].dt + tz_offset as i64) / 86_400;
+                let day_prev = (data_for_draw[i - 1].dt + tz_offset as i64) / 86400;
+                let day_curr = (data_for_draw[i].dt + tz_offset as i64) / 86400;
                 if day_curr != day_prev {
                     let x = xs[i];
-                    c.set_source_rgba(120.0 / 255.0, 130.0 / 255.0, 170.0 / 255.0, 0.25);
+                    c.set_source_rgba(120.0 / 255.0, 130.0 / 255.0, 170.0 / 255.0, 0.15); // Fainter
                     c.set_line_width(1.0);
                     c.move_to(x, temp_top);
                     c.line_to(x, precip_bottom);
@@ -377,7 +376,7 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
                 st.curr_y = y_temps_target.clone(); st.prev_y = y_temps_target.clone();
                 st.curr_pop = pop_targets.clone(); st.prev_pop = pop_targets.clone();
                 st.progress = 1.0; st.animating = false;
-            } else if st.curr_y.len() != y_temps_target.len()
+            } else if st.curr_y.len() != y_temps_target.len() 
                 || y_temps_target.iter().zip(st.curr_y.iter()).any(|(a, b)| (a - b).abs() > 0.1)
                 || pop_targets.iter().zip(st.curr_pop.iter()).any(|(a, b)| (a - b).abs() > 0.01)
             {
@@ -483,8 +482,8 @@ pub fn create_hourly_graph_plot( // Renamed to clearly indicate it's the plot ar
                 }
             }
             if let Some(x) = now_x {
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.25);
-                ctx.set_line_width(1.0);
+                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5); // More opaque white
+                ctx.set_line_width(1.5); // Thicker line
                 ctx.move_to(x, temp_top);
                 ctx.line_to(x, precip_bottom);
                 let _ = ctx.stroke();
