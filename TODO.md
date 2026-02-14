@@ -12,5 +12,5 @@
 - [ ] Consider adding integration tests for the full flow (mocking the API).
 
 ## Code Quality
-- [ ] Use `tracing` or `env_logger` for structured logging instead of `eprintln!`.
+- [x] Use `tracing` or `env_logger` for structured logging instead of `eprintln!`.
 - [x] Refactor `src/dashboard.rs` UI building code into smaller, reusable components/functions to improve readability.

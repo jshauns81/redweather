@@ -5,17 +5,22 @@
 use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, FlowBox, GestureDrag,
-    HeaderBar, Label, Orientation, ScrolledWindow, Separator, Spinner,
+    Grid, HeaderBar, Label, Orientation, ScrolledWindow, Separator, Spinner,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::config::{load_config, Config, DashboardConfigResolved, Units};
+use crate::config::{load_config, Config, DashboardConfigResolved, TempBand, Units};
 use crate::gauges::{create_arc_gauge, create_compass_gauge};
 use crate::graph::{create_hourly_graph_plot, create_hourly_y_axis, YAxisMetrics};
 use crate::ui::show_location_dialog;
-use crate::utils::{deg_to_dir, fmt_time, is_night, moon_phase_icon, pick_icon};
-use crate::weather::{fetch_weather_for_loc, resolve_location, ApiResponse, Location, WeatherDesc};
+use crate::utils::{
+    deg_to_dir, fmt_time, humidity_color, is_night, moon_phase_icon, pick_icon, temp_color,
+    uvi_color,
+};
+use crate::weather::{
+    fetch_weather_for_loc, resolve_location, Alert, ApiResponse, Location, WeatherDesc,
+};
 // Constants
 const MAX_UVI: f64 = 11.0;
 const SPINNER_SIZE: i32 = 64;
@@ -31,26 +36,6 @@ const UVI_VERY_HIGH: f64 = 8.0;
 const UVI_HIGH: f64 = 6.0;
 const UVI_MODERATE: f64 = 3.0;
 
-/// Helper to get color based on temperature
-fn get_temp_color(temp: f64, units: Units) -> &'static str {
-    let temp_f = if units == Units::Metric {
-        temp * 9.0 / 5.0 + 32.0 // Convert to F for rules
-    } else {
-        temp
-    };
-
-    if temp_f < 32.0 {
-        "#7dd3fc" // cold cyan
-    } else if temp_f < 50.0 {
-        "#818cf8" // cool indigo
-    } else if temp_f < 70.0 {
-        "#fbbf24" // mild yellow
-    } else if temp_f < 85.0 {
-        "#f97316" // warm orange
-    } else {
-        "#ef4444" // hot red-orange
-    }
-}
 
 
 /// Spawns an async task to fetch weather data and update the UI
@@ -244,7 +229,7 @@ fn build_ui(
         dash_cfg.window_height = Some(height);
 
         if let Err(e) = crate::config::save_config(&current_cfg) {
-            eprintln!("Failed to save window state: {}", e);
+            tracing::error!(error = %e, "Failed to save window state");
         }
 
         gtk::glib::Propagation::Proceed
@@ -312,29 +297,38 @@ fn build_ui(
         }
     });
 
+    // Auto-refresh every 10 minutes
+    {
+        let key_refresh = key.clone();
+        let loc_refresh = loc.clone();
+        let scroll_weak_refresh = main_scroll.downgrade();
+        let cfg_refresh = cfg.clone();
+        glib::timeout_add_seconds_local(600, move || {
+            spawn_weather_fetch(
+                key_refresh.clone(),
+                loc_refresh.clone(),
+                units,
+                scroll_weak_refresh.clone(),
+                cfg_refresh.clone(),
+            );
+            glib::ControlFlow::Continue
+        });
+    }
+
     window.show();
 }
 
-/// Builds the header section with date
-fn build_header_section(_loc: &Location, data: &ApiResponse) -> GtkBox {
-    let header_box = GtkBox::new(Orientation::Vertical, 4);
-    header_box.set_halign(gtk::Align::Center);
-    header_box.add_css_class("hero-header");
-
-    let date_str = fmt_time(data.current.dt, data.timezone_offset, "%A, %B %d %Y");
-    let date_label = Label::new(Some(&date_str));
-    date_label.add_css_class("date-subtitle");
-
-    header_box.append(&date_label);
-
-    header_box
-}
-
-/// Builds the current weather section with temperature and icon
-fn build_current_weather_section(data: &ApiResponse, units: Units) -> GtkBox {
-    let current_box = GtkBox::new(Orientation::Vertical, 6);
-    current_box.set_halign(gtk::Align::Center);
-    current_box.add_css_class("hero-block");
+/// Builds the combined hero section: icon+temp on left, info+details on right
+fn build_hero_section(
+    loc: &Location,
+    data: &ApiResponse,
+    units: Units,
+    bands: &[TempBand],
+) -> GtkBox {
+    let (temp_unit, speed_unit, dist_unit) = match units {
+        Units::Imperial => ("°F", "mph", "mi"),
+        Units::Metric => ("°C", "m/s", "km"),
+    };
 
     let current_desc = data.current.weather.get(0).cloned().unwrap_or(WeatherDesc {
         main: Some("Clear".into()),
@@ -347,21 +341,44 @@ fn build_current_weather_section(data: &ApiResponse, units: Units) -> GtkBox {
     let moon_icon = Some(moon_phase_icon(data.current.dt, data.timezone_offset));
     let icon = pick_icon(&current_desc, is_night_now, moon_icon);
 
+    let hero_row = GtkBox::new(Orientation::Horizontal, 16);
+    hero_row.set_halign(gtk::Align::Center);
+    hero_row.add_css_class("hero-block");
+
+    // ── Left column: icon + temp ───────────────────────────────────────
+    let left_col = GtkBox::new(Orientation::Vertical, 2);
+    left_col.set_halign(gtk::Align::Center);
+    left_col.set_valign(gtk::Align::Center);
+
     let icon_label = Label::new(Some(&icon));
     icon_label.add_css_class("hero-icon");
 
-    let (temp_unit, _speed_unit) = match units {
-        Units::Imperial => ("°F", "mph"),
-        Units::Metric => ("°C", "m/s"),
-    };
     let current_temp = data.current.temp.round();
-    let temp_label = Label::new(None); // Set markup later
+    let temp_label = Label::new(None);
     temp_label.set_markup(&format!(
         "<span foreground='{}'>{:.0}{}</span>",
-        get_temp_color(data.current.temp, units),
+        temp_color(data.current.temp, bands),
         current_temp,
         temp_unit
     ));
+    temp_label.add_css_class("hero-temp");
+
+    left_col.append(&icon_label);
+    left_col.append(&temp_label);
+    hero_row.append(&left_col);
+
+    // ── Right column: location, date, desc, feels, detail grid ─────────
+    let right_col = GtkBox::new(Orientation::Vertical, 3);
+    right_col.set_valign(gtk::Align::Center);
+
+    let loc_label = Label::new(Some(&loc.label));
+    loc_label.add_css_class("location-title");
+    loc_label.set_halign(gtk::Align::Start);
+
+    let date_str = fmt_time(data.current.dt, data.timezone_offset, "%A, %B %d %Y");
+    let date_label = Label::new(Some(&date_str));
+    date_label.add_css_class("date-subtitle");
+    date_label.set_halign(gtk::Align::Start);
 
     let desc_text = current_desc
         .main
@@ -370,17 +387,80 @@ fn build_current_weather_section(data: &ApiResponse, units: Units) -> GtkBox {
         .unwrap_or_default();
     let desc_label = Label::new(Some(&desc_text));
     desc_label.add_css_class("hero-desc");
+    desc_label.set_halign(gtk::Align::Start);
 
     let feels_like = data.current.feels_like.unwrap_or(data.current.temp).round();
     let feels_label = Label::new(Some(&format!("Feels like {:.0}{}", feels_like, temp_unit)));
     feels_label.add_css_class("hero-feels");
+    feels_label.set_halign(gtk::Align::Start);
 
-    current_box.append(&icon_label);
-    current_box.append(&temp_label);
-    current_box.append(&desc_label);
-    current_box.append(&feels_label);
+    right_col.append(&loc_label);
+    right_col.append(&date_label);
+    right_col.append(&desc_label);
+    right_col.append(&feels_label);
 
-    current_box
+    // ── Inline detail grid ─────────────────────────────────────────────
+    let grid = Grid::new();
+    grid.set_row_spacing(2);
+    grid.set_column_spacing(12);
+    grid.set_halign(gtk::Align::Start);
+    grid.set_margin_top(4);
+
+    let humidity = data.current.humidity.unwrap_or(0);
+    let dew_point = data.current.dew_point.map(|d| format!("{:.0}°", d.round())).unwrap_or_else(|| "—".into());
+    let pressure = data.current.pressure.map(|p| format!("{} hPa", p)).unwrap_or_else(|| "—".into());
+    let vis_meters = data.current.visibility.unwrap_or(10000);
+    let visibility = match units {
+        Units::Imperial => format!("{:.0} {}", (vis_meters as f64 / 1609.34).round(), dist_unit),
+        Units::Metric => format!("{:.0} {}", (vis_meters as f64 / 1000.0).round(), dist_unit),
+    };
+    let wind_speed = data.current.wind_speed.unwrap_or(0.0).round();
+    let wind_dir = deg_to_dir(data.current.wind_deg);
+    let wind_gust = data.current.wind_gust
+        .filter(|&g| g.round() > wind_speed + 5.0)
+        .map(|g| format!(" (gust {:.0})", g.round()))
+        .unwrap_or_default();
+    let uvi = data.current.uvi.unwrap_or(0.0);
+    let sunrise = data.current.sunrise
+        .map(|t| fmt_time(t, data.timezone_offset, "%I:%M %p"))
+        .unwrap_or_else(|| "—".into());
+    let sunset = data.current.sunset
+        .map(|t| fmt_time(t, data.timezone_offset, "%I:%M %p"))
+        .unwrap_or_else(|| "—".into());
+
+    let details: Vec<(&str, String)> = vec![
+        ("Humidity", format!("<span foreground='{}'>{humidity}%</span>", humidity_color(humidity))),
+        ("Dew Point", dew_point),
+        ("Pressure", pressure),
+        ("Visibility", visibility),
+        ("Wind", format!("{:.0} {} {}{}", wind_speed, speed_unit, wind_dir, wind_gust)),
+        ("UV Index", format!("<span foreground='{}'>{:.0}</span>", uvi_color(uvi), uvi.round())),
+        ("Sunrise", format!("☀ {}", sunrise)),
+        ("Sunset", format!("☀ {}", sunset)),
+    ];
+
+    let cols = 2;
+    for (i, (lbl_text, val_text)) in details.iter().enumerate() {
+        let col = (i % cols) as i32 * 2;
+        let row = (i / cols) as i32;
+
+        let lbl = Label::new(Some(lbl_text));
+        lbl.add_css_class("detail-grid-label");
+        lbl.set_halign(gtk::Align::End);
+
+        let val = Label::new(None);
+        val.set_markup(val_text);
+        val.add_css_class("detail-grid-value");
+        val.set_halign(gtk::Align::Start);
+
+        grid.attach(&lbl, col, row, 1, 1);
+        grid.attach(&val, col + 1, row, 1, 1);
+    }
+
+    right_col.append(&grid);
+    hero_row.append(&right_col);
+
+    hero_row
 }
 
 /// Builds the gauges section with humidity, UV, wind, and daylight gauges
@@ -641,7 +721,8 @@ fn build_hourly_forecast_section(
 fn build_daily_forecast_section(
     data: &ApiResponse,
     dashboard_config: &DashboardConfigResolved,
-    units: Units,
+    _units: Units,
+    bands: &[TempBand],
 ) -> GtkBox {
     let section_box = GtkBox::new(Orientation::Vertical, 10);
 
@@ -667,25 +748,17 @@ fn build_daily_forecast_section(
     let forecast_days = dashboard_config.forecast_days.max(5).min(12);
     for (i, d) in data.daily.iter().take(forecast_days).enumerate() {
         let day_str = fmt_time(d.dt, data.timezone_offset, "%a").to_uppercase();
-        let mid_dt = d.dt + 43_200; // midday heuristic
-        let (sr, ss) = d.sunrise.zip(d.sunset).unwrap_or((0, 0));
-        let night = is_night(mid_dt, Some(sr), Some(ss));
+        // Daily forecasts always use daytime icons — no moon phase
         let icon_str = d
             .weather
             .get(0)
-            .map(|desc| {
-                pick_icon(
-                    desc,
-                    night,
-                    Some(moon_phase_icon(mid_dt, data.timezone_offset)),
-                )
-            })
+            .map(|desc| pick_icon(desc, false, None))
             .unwrap_or_else(|| "❓".into());
         let hi = d.temp.max.or(d.temp.day).unwrap_or(0.0).round();
         let lo = d.temp.min.unwrap_or(0.0).round();
         let pop = d.pop.unwrap_or(0.0);
 
-        let card = create_tokyo_forecast_card(&day_str, &icon_str, hi, lo, pop, i, units); // Pass units here
+        let card = create_tokyo_forecast_card(&day_str, &icon_str, hi, lo, pop, i, bands);
         daily_box.append(&card);
     }
 
@@ -781,8 +854,14 @@ fn refresh_content(
     };
 
     // Build and append all sections
-    vbox.append(&build_header_section(loc, data));
-    vbox.append(&build_current_weather_section(data, units));
+    let bands = TempBand::from_config(&cfg.temp_bands);
+
+    // Weather alerts banner (if any)
+    if !data.alerts.is_empty() {
+        vbox.append(&build_alerts_banner(&data.alerts, data.timezone_offset));
+    }
+
+    vbox.append(&build_hero_section(loc, data, units, &bands));
 
     vbox.append(&create_section_divider());
     vbox.append(&build_gauges_section(data, units));
@@ -791,9 +870,76 @@ fn refresh_content(
     vbox.append(&build_hourly_forecast_section(data, &dashboard_config));
 
     // Forecast stays scrollable horizontally; omit extra divider to save vertical space
-    vbox.append(&build_daily_forecast_section(data, &dashboard_config, units));
+    vbox.append(&build_daily_forecast_section(data, &dashboard_config, units, &bands));
 
     scroll.set_child(Some(&vbox));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Weather alerts banner
+// ═══════════════════════════════════════════════════════════════════════
+
+fn build_alerts_banner(alerts: &[Alert], tz_offset: i64) -> GtkBox {
+    let outer = GtkBox::new(Orientation::Vertical, 4);
+    outer.set_margin_bottom(6);
+
+    for alert in alerts.iter().take(3) {
+        let banner = GtkBox::new(Orientation::Vertical, 2);
+        banner.add_css_class("alert-banner");
+
+        // Classify severity by tags
+        let is_extreme = alert.tags.iter().any(|t| {
+            let t = t.to_lowercase();
+            t.contains("extreme") || t.contains("tornado") || t.contains("hurricane")
+        }) || alert.event.to_lowercase().contains("tornado")
+           || alert.event.to_lowercase().contains("hurricane");
+
+        if is_extreme {
+            banner.add_css_class("alert-extreme");
+        } else {
+            banner.add_css_class("alert-warning");
+        }
+
+        // Header: icon + event name
+        let header = GtkBox::new(Orientation::Horizontal, 6);
+        header.set_halign(gtk::Align::Start);
+
+        let icon = Label::new(Some(if is_extreme { "🚨" } else { "⚠" }));
+        icon.add_css_class("alert-icon");
+        header.append(&icon);
+
+        let event_lbl = Label::new(Some(&alert.event));
+        event_lbl.add_css_class("alert-event");
+        header.append(&event_lbl);
+
+        banner.append(&header);
+
+        // Time range
+        let start = fmt_time(alert.start, tz_offset, "%a %-I:%M %p");
+        let end = fmt_time(alert.end, tz_offset, "%a %-I:%M %p");
+        let time_lbl = Label::new(Some(&format!("{} — {}", start, end)));
+        time_lbl.add_css_class("alert-time");
+        time_lbl.set_halign(gtk::Align::Start);
+        banner.append(&time_lbl);
+
+        // Truncated description
+        let desc_text: String = alert.description.chars().take(200).collect();
+        let desc_text = if alert.description.len() > 200 {
+            format!("{}…", desc_text.trim())
+        } else {
+            desc_text
+        };
+        let desc_lbl = Label::new(Some(&desc_text));
+        desc_lbl.add_css_class("alert-desc");
+        desc_lbl.set_halign(gtk::Align::Start);
+        desc_lbl.set_wrap(true);
+        desc_lbl.set_max_width_chars(60);
+        banner.append(&desc_lbl);
+
+        outer.append(&banner);
+    }
+
+    outer
 }
 
 fn sun_window_for(dt: i64, data: &ApiResponse) -> Option<(i64, i64)> {
@@ -942,7 +1088,7 @@ fn create_tokyo_forecast_card(
     lo: f64,
     pop: f64,
     index: usize,
-    units: Units, // Pass units here
+    bands: &[TempBand],
 ) -> GtkBox {
     let card = GtkBox::new(Orientation::Vertical, 0);
     card.add_css_class("tokyo-card");
@@ -971,7 +1117,7 @@ fn create_tokyo_forecast_card(
     center_box.append(&icon_lbl);
 
     // Temperatures with Pango markup
-    let hi_color = get_temp_color(hi, units); // Dynamic high temp color
+    let hi_color = temp_color(hi, bands);
     let lo_color = "#93c5fd"; // Fixed low temp color
 
     // We rely on relative sizes (x-large, medium) which scale with the widget's font size (set by CSS on window)
@@ -1255,7 +1401,6 @@ const STYLE_CSS: &str = r#"
             rgba(0, 0, 0, 0.85) 0%,
             rgba(0, 0, 0, 0.6) 40%,
             transparent 100%);
-        pointer-events: none;
         transition: opacity 0.25s ease-out;
     }
 
@@ -1264,7 +1409,6 @@ const STYLE_CSS: &str = r#"
             rgba(0, 0, 0, 0.85) 0%,
             rgba(0, 0, 0, 0.6) 40%,
             transparent 100%);
-        pointer-events: none;
         transition: opacity 0.25s ease-out;
     }
 
@@ -1332,4 +1476,55 @@ const STYLE_CSS: &str = r#"
 
     /* Utility: Note text size */
     .note { font-size: 0.8rem; }
+
+    /* ── Location title ── */
+    .location-title {
+        font-size: 1.2rem;
+        font-weight: 740;
+        color: #e9ecf8;
+        letter-spacing: 0.02rem;
+    }
+
+    /* ── Detail grid (compact stats) ── */
+    .detail-grid-label {
+        font-size: 0.78rem;
+        color: #7a8baf;
+    }
+    .detail-grid-value {
+        font-size: 0.82rem;
+        color: #d9e1ff;
+        font-weight: 600;
+    }
+
+    /* ── Alert banners ── */
+    .alert-banner {
+        border-radius: 0.6rem;
+        padding: 0.55rem 0.8rem;
+        margin-bottom: 4px;
+    }
+    .alert-warning {
+        background: rgba(235, 203, 139, 0.12);
+        border: 1px solid rgba(235, 203, 139, 0.45);
+    }
+    .alert-extreme {
+        background: rgba(191, 97, 106, 0.18);
+        border: 1px solid rgba(191, 97, 106, 0.55);
+    }
+    .alert-icon {
+        font-size: 1.1rem;
+    }
+    .alert-event {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: #f4b8e4;
+    }
+    .alert-time {
+        font-size: 0.75rem;
+        color: #a0accf;
+    }
+    .alert-desc {
+        font-size: 0.75rem;
+        color: #b8c5e6;
+        margin-top: 2px;
+    }
 "#;

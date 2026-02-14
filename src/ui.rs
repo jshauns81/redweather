@@ -1,5 +1,4 @@
 use anyhow::Result;
-use glib::clone;
 use gtk::prelude::*;
 use gtk::{
     Adjustment, Application, ApplicationWindow, Box as GtkBox, Button, ComboBoxText, Entry, Label,
@@ -8,6 +7,7 @@ use gtk::{
 use std::cell::RefCell;
 use std::process::Command;
 use std::rc::Rc;
+use tracing::error;
 
 use crate::config::{
     save_config, save_location_preset, update_active_preset, Config, DashboardConfig,
@@ -135,7 +135,7 @@ where
                 _ => crate::config::Units::Imperial,
             };
             if let Err(e) = save_config(&cfg_borrow) {
-                eprintln!("Failed to save config: {}", e);
+                error!(error = %e, "Failed to save config");
             }
             on_update_clone_u();
         }
@@ -160,7 +160,7 @@ where
             .get_or_insert_with(DashboardConfig::default);
         dash_cfg.show_hourly_graph = sw.is_active();
         if let Err(e) = save_config(&cfg_borrow) {
-            eprintln!("Failed to save config: {}", e);
+            error!(error = %e, "Failed to save config");
         }
         on_update_clone_g();
     });
@@ -191,7 +191,7 @@ where
             .get_or_insert_with(DashboardConfig::default);
         dash_cfg.forecast_hours = sb.value() as usize;
         if let Err(e) = save_config(&cfg_borrow) {
-            eprintln!("Failed to save config: {}", e);
+            error!(error = %e, "Failed to save config");
         }
         on_update_clone_h();
     });
@@ -222,7 +222,7 @@ where
             .get_or_insert_with(DashboardConfig::default);
         dash_cfg.forecast_days = sb.value() as usize;
         if let Err(e) = save_config(&cfg_borrow) {
-            eprintln!("Failed to save config: {}", e);
+            error!(error = %e, "Failed to save config");
         }
         on_update_clone_d();
     });
@@ -385,8 +385,11 @@ where
         });
     };
 
-    search_btn.connect_clicked(clone!(@strong perform_search => move |_| perform_search()));
-    search_entry.connect_activate(clone!(@strong perform_search => move |_| perform_search()));
+    {
+        let ps = perform_search.clone();
+        search_btn.connect_clicked(move |_| ps());
+    }
+    search_entry.connect_activate(move |_| perform_search());
 
     // Preset Logic - IMMEDIATE ACTION
     let on_update_rc_preset = on_update_rc.clone();
@@ -399,7 +402,7 @@ where
         }
         if let Some(preset_id) = preset_ids.get(idx as usize) {
             if let Err(e) = update_active_preset(preset_id.as_str()) {
-                eprintln!("Failed to activate preset: {}", e);
+                error!(error = %e, preset = preset_id.as_str(), "Failed to activate preset");
                 // Optionally show error to user in dialog
             } else {
                 reload_waybar();
@@ -426,7 +429,7 @@ where
                 .to_string();
 
             if let Err(e) = save_location_preset(&name, loc.lat, loc.lon, &loc.label) {
-                eprintln!("Failed to save preset: {}", e);
+                error!(error = %e, name = name.as_str(), "Failed to save preset");
             } else {
                 reload_waybar();
                 on_update_rc_use();

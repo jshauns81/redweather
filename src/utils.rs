@@ -49,24 +49,24 @@ pub fn pick_icon(desc: &WeatherDesc, is_night: bool, moon_icon: Option<&str>) ->
     let main = desc.main.as_deref().unwrap_or("").to_lowercase();
     let full = desc.description.as_deref().unwrap_or("").to_lowercase();
     if main.contains("thunder") || full.contains("thunder") {
-        "⛈️".into()
+        "⛈".into()
     } else if main.contains("snow") || full.contains("snow") || main.contains("sleet") {
-        "❄️".into()
+        "❄".into()
     } else if main.contains("rain") || full.contains("rain") || full.contains("drizzle") {
-        "🌧️".into()
+        "🌧".into()
     } else if full.contains("fog") || full.contains("mist") || full.contains("haze") {
-        "🌫️".into()
+        "🌫".into()
     } else if main.contains("cloud") || full.contains("cloud") || full.contains("overcast") {
         if is_night {
-            "☁️".into()
+            "☁".into()
         } else {
-            "☁️".into()
+            "☁".into()
         }
     } else if main.contains("clear") || full.contains("clear") || full.contains("sun") {
         if is_night {
             moon_icon.unwrap_or("🌙").to_string()
         } else {
-            "☀️".into()
+            "☀".into()
         }
     } else {
         "❓".into()
@@ -141,13 +141,14 @@ pub fn fmt_time(dt: i64, tz_offset: i64, fmt: &str) -> String {
     shifted.format(fmt).to_string()
 }
 
-/// Truncates a description string to the specified maximum length
+/// Truncates a description string to the specified maximum character count.
+/// Uses char boundaries to avoid panics on multibyte characters.
 pub fn short_desc(desc: &str, max_len: usize) -> String {
-    let mut d = desc.trim().to_string();
-    if d.len() > max_len {
-        d.truncate(max_len);
+    let trimmed = desc.trim();
+    if trimmed.chars().count() <= max_len {
+        return trimmed.to_string();
     }
-    d
+    trimmed.chars().take(max_len).collect()
 }
 
 /// Generates a sparkline string from a list of values using Unicode block characters
@@ -171,6 +172,21 @@ pub fn sparkline(values: &[f64]) -> String {
             }
         })
         .collect()
+}
+
+/// Returns a color hex code for a given humidity percentage
+pub fn humidity_color(humidity: u8) -> &'static str {
+    if humidity < 30 {
+        "#85c1dc" // Dry (light blue)
+    } else if humidity < 55 {
+        "#a3be8c" // Comfortable (green)
+    } else if humidity < 70 {
+        "#ebcb8b" // Slightly muggy (yellow)
+    } else if humidity < 85 {
+        "#d08770" // Muggy (orange)
+    } else {
+        "#bf616a" // Oppressive (red)
+    }
 }
 
 /// Returns a color hex code for a given UV index
@@ -222,32 +238,32 @@ mod tests {
             main: Some("Thunderstorm".into()),
             description: Some("thunderstorm with rain".into()),
         };
-        assert_eq!(pick_icon(&thunder, false, None), "⛈️");
+        assert_eq!(pick_icon(&thunder, false, None), "⛈");
 
         let snow = WeatherDesc {
             main: Some("Snow".into()),
             description: Some("light snow".into()),
         };
-        assert_eq!(pick_icon(&snow, false, None), "❄️");
+        assert_eq!(pick_icon(&snow, false, None), "❄");
 
         let rain = WeatherDesc {
             main: Some("Rain".into()),
             description: Some("moderate rain".into()),
         };
-        assert_eq!(pick_icon(&rain, false, None), "🌧️");
+        assert_eq!(pick_icon(&rain, false, None), "🌧");
 
         let clear = WeatherDesc {
             main: Some("Clear".into()),
             description: Some("clear sky".into()),
         };
-        assert_eq!(pick_icon(&clear, false, Some("🌙")), "☀️");
+        assert_eq!(pick_icon(&clear, false, Some("🌙")), "☀");
         assert_eq!(pick_icon(&clear, true, Some("🌙")), "🌙");
 
         let clouds = WeatherDesc {
             main: Some("Clouds".into()),
             description: Some("broken clouds".into()),
         };
-        assert_eq!(pick_icon(&clouds, false, None), "☁️");
+        assert_eq!(pick_icon(&clouds, false, None), "☁");
     }
 
     #[test]
@@ -298,6 +314,15 @@ mod tests {
     fn test_uvi_color() {
         assert_eq!(uvi_color(1.0), "#a3be8c");
         assert_eq!(uvi_color(12.0), "#b48ead");
+    }
+
+    #[test]
+    fn test_humidity_color() {
+        assert_eq!(humidity_color(20), "#85c1dc");  // Dry
+        assert_eq!(humidity_color(45), "#a3be8c");  // Comfortable
+        assert_eq!(humidity_color(65), "#ebcb8b");  // Slightly muggy
+        assert_eq!(humidity_color(75), "#d08770");  // Muggy
+        assert_eq!(humidity_color(90), "#bf616a");  // Oppressive
     }
 
     #[test]

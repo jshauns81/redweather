@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::{error, warn};
 
 /// API key file path relative to HOME
 pub const KEY_FILE: &str = ".config/redweather/apikey";
@@ -421,7 +422,7 @@ pub fn load_config() -> Config {
     let home = match env::var("HOME") {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("Error getting HOME environment variable: {}", e);
+            error!(error = %e, "Error getting HOME environment variable");
             return Config::default();
         }
     };
@@ -431,13 +432,13 @@ pub fn load_config() -> Config {
         Ok(contents) => match parse_config_with_legacy(&contents) {
             Ok((cfg, legacy)) => (cfg, legacy),
             Err(e) => {
-                eprintln!("Error parsing config file {}: {}", path.display(), e);
+                error!(path = %path.display(), error = %e, "Error parsing config file");
                 (Config::default(), None)
             }
         },
         Err(e) => {
             if e.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Error reading config file {}: {}", path.display(), e);
+                warn!(path = %path.display(), error = %e, "Error reading config file");
             }
             (Config::default(), None)
         }

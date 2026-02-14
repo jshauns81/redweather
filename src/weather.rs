@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration as StdDuration;
+use tracing::{debug, error, warn};
 
 use crate::config::{Config, Units};
 
@@ -54,11 +56,13 @@ pub struct Current {
     pub dt: i64,
     pub temp: f64,
     pub feels_like: Option<f64>,
+    pub dew_point: Option<f64>,
     pub pressure: Option<i64>,
     pub humidity: Option<u8>,
     pub uvi: Option<f64>,
     pub visibility: Option<u32>,
     pub wind_speed: Option<f64>,
+    pub wind_gust: Option<f64>,
     pub wind_deg: Option<i64>,
     pub sunrise: Option<i64>,
     pub sunset: Option<i64>,
@@ -105,6 +109,18 @@ pub struct Daily {
     pub weather: Vec<WeatherDesc>,
 }
 
+/// Weather alert from a national weather service
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Alert {
+    pub sender_name: Option<String>,
+    pub event: String,
+    pub start: i64,
+    pub end: i64,
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
 /// OpenWeatherMap API response structure
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApiResponse {
@@ -112,6 +128,8 @@ pub struct ApiResponse {
     pub current: Current,
     pub hourly: Vec<Hourly>,
     pub daily: Vec<Daily>,
+    #[serde(default)]
+    pub alerts: Vec<Alert>,
 }
 
 /// Cached weather data with timestamp
@@ -141,14 +159,14 @@ pub fn load_cache(cache_key: &str) -> Option<ApiResponse> {
     let contents = match fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error reading cache file {}: {}", path.display(), e);
+            debug!(path = %path.display(), error = %e, "Cache file not readable");
             return None;
         }
     };
     let cached: CacheFile = match serde_json::from_str(&contents) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error parsing cache file {}: {}", path.display(), e);
+            warn!(path = %path.display(), error = %e, "Error parsing cache file");
             return None;
         }
     };
@@ -166,14 +184,14 @@ pub fn load_stale_cache(cache_key: &str) -> Option<ApiResponse> {
     let contents = match fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error reading stale cache file {}: {}", path.display(), e);
+            debug!(path = %path.display(), error = %e, "Stale cache file not readable");
             return None;
         }
     };
     let cached: CacheFile = match serde_json::from_str(&contents) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error parsing stale cache file {}: {}", path.display(), e);
+            warn!(path = %path.display(), error = %e, "Error parsing stale cache file");
             return None;
         }
     };
@@ -185,7 +203,7 @@ pub fn save_cache(cache_key: &str, data: &ApiResponse) {
     let path = cache_path(cache_key);
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            eprintln!("Error creating cache directory {}: {}", parent.display(), e);
+            error!(path = %parent.display(), error = %e, "Error creating cache directory");
             return;
         }
     }
@@ -196,11 +214,11 @@ pub fn save_cache(cache_key: &str, data: &ApiResponse) {
     match serde_json::to_string(&cache) {
         Ok(json) => {
             if let Err(e) = fs::write(&path, json) {
-                eprintln!("Error writing cache file {}: {}", path.display(), e);
+                error!(path = %path.display(), error = %e, "Error writing cache file");
             }
         }
         Err(e) => {
-            eprintln!("Error serializing cache data for {}: {}", path.display(), e);
+            error!(path = %path.display(), error = %e, "Error serializing cache data");
         }
     }
 }
@@ -218,31 +236,49 @@ pub async fn fetch_weather_for_loc(key: &str, loc: &Location, units: Units) -> R
         .append_pair("lon", &loc.lon.to_string())
         .append_pair("appid", key)
         .append_pair("units", units_str)
-        .append_pair("exclude", "minutely,alerts");
+        .append_pair("exclude", "minutely");
 
-    // Retry logic with exponential backoff
+    // Use generic retry helper for the HTTP request
+    retry_with_backoff(|| async {
+        let resp = HTTP_CLIENT
+            .get(url.clone())
+            .send()
+            .await
+            .map_err(|e| anyhow!("Request failed: {}", e))?;
+        let resp = resp
+            .error_for_status()
+            .map_err(|e| anyhow!("API returned error status: {}", e))?;
+        resp.json::<ApiResponse>()
+            .await
+            .map_err(|e| anyhow!("Failed to parse JSON: {}", e))
+    })
+    .await
+}
+
+/// Retries an async operation with exponential backoff.
+///
+/// Calls `op` up to `MAX_RETRIES` times. On each failure, waits with
+/// exponentially increasing delay before retrying.
+async fn retry_with_backoff<F, Fut, T>(op: F) -> Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
     let mut last_error = None;
     for attempt in 0..MAX_RETRIES {
-        match HTTP_CLIENT.get(url.clone()).send().await {
-            Ok(resp) => match resp.error_for_status() {
-                Ok(r) => match r.json::<ApiResponse>().await {
-                    Ok(parsed) => return Ok(parsed),
-                    Err(e) => last_error = Some(anyhow!("Failed to parse JSON: {}", e)),
-                },
-                Err(e) => last_error = Some(anyhow!("API returned error status: {}", e)),
-            },
-            Err(e) => last_error = Some(anyhow!("Request failed: {}", e)),
+        match op().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                debug!(attempt = attempt + 1, error = %e, "Retry attempt failed");
+                last_error = Some(e);
+            }
         }
-
-        // Exponential backoff before retry
         if attempt < MAX_RETRIES - 1 {
             let delay = RETRY_BASE_DELAY_MS * 2_u64.pow(attempt);
             tokio::time::sleep(StdDuration::from_millis(delay)).await;
         }
     }
-
-    Err(last_error
-        .unwrap_or_else(|| anyhow!("Weather fetch failed after {} attempts", MAX_RETRIES)))
+    Err(last_error.unwrap_or_else(|| anyhow!("Operation failed after {} attempts", MAX_RETRIES)))
 }
 
 /// Resolves a location from command-line overrides or configured presets
@@ -254,18 +290,16 @@ pub async fn resolve_location(
     // Priority 1: Command line ZIP argument (one-time override)
     if let Some(z) = zip {
         // Try ZIP geocoding first
-        match geocode_zip_with_retry(key, z).await {
+        match retry_with_backoff(|| geocode_zip(key, z)).await {
             Ok(Some(loc)) => return Ok(Some(loc)),
             Err(e) => {
-                // If it wasn't a 404/not found logic error but a network/API error, maybe log it?
-                // For now, we fall through to try direct geocoding, but we might want to surface this error if direct also fails.
-                eprintln!("ZIP geocoding warning: {}", e);
+                warn!(error = %e, query = z, "ZIP geocoding failed, trying direct");
             }
             Ok(None) => {} // Just not found as ZIP, try direct
         }
 
         // Try direct name geocoding
-        match geocode_direct_with_retry(key, z).await {
+        match retry_with_backoff(|| geocode_direct(key, z)).await {
             Ok(Some(loc)) => return Ok(Some(loc)),
             Err(e) => return Err(e), // Return the error if direct geocoding failed technically
             Ok(None) => return Ok(None), // Both methods returned None (Not Found)
@@ -295,38 +329,6 @@ pub async fn resolve_location(
 
     // No location configured
     Ok(None)
-}
-
-/// Geocodes a ZIP code with retry logic
-async fn geocode_zip_with_retry(key: &str, zip: &str) -> Result<Option<Location>> {
-    let mut last_error = None;
-    for attempt in 0..MAX_RETRIES {
-        match geocode_zip(key, zip).await {
-            Ok(opt) => return Ok(opt),
-            Err(e) => last_error = Some(e),
-        }
-        if attempt < MAX_RETRIES - 1 {
-            let delay = RETRY_BASE_DELAY_MS * 2_u64.pow(attempt);
-            tokio::time::sleep(StdDuration::from_millis(delay)).await;
-        }
-    }
-    Err(last_error.unwrap_or_else(|| anyhow!("Geocode ZIP failed after retries")))
-}
-
-/// Geocodes a direct query with retry logic
-async fn geocode_direct_with_retry(key: &str, query: &str) -> Result<Option<Location>> {
-    let mut last_error = None;
-    for attempt in 0..MAX_RETRIES {
-        match geocode_direct(key, query).await {
-            Ok(opt) => return Ok(opt),
-            Err(e) => last_error = Some(e),
-        }
-        if attempt < MAX_RETRIES - 1 {
-            let delay = RETRY_BASE_DELAY_MS * 2_u64.pow(attempt);
-            tokio::time::sleep(StdDuration::from_millis(delay)).await;
-        }
-    }
-    Err(last_error.unwrap_or_else(|| anyhow!("Geocode direct failed after retries")))
 }
 
 /// Geocodes a ZIP code to geographic coordinates
@@ -498,11 +500,13 @@ mod tests {
                 dt: Utc::now().timestamp(),
                 temp: 20.0,
                 feels_like: None,
+                dew_point: None,
                 pressure: None,
                 humidity: None,
                 uvi: None,
                 visibility: None,
                 wind_speed: None,
+                wind_gust: None,
                 wind_deg: None,
                 sunrise: None,
                 sunset: None,
@@ -512,6 +516,7 @@ mod tests {
             },
             hourly: vec![],
             daily: vec![],
+            alerts: vec![],
         };
 
         // Test Save

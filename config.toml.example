@@ -4,18 +4,28 @@
 # Temperature and speed units: "imperial" (°F, mph) or "metric" (°C, m/s)
 units = "imperial"  # or "metric"
 
-# UI customization
+# UI customization (for Waybar tooltip)
 [ui]
 font_size = 9           # Font size for tooltip text
 max_desc_len = 10       # Maximum length for weather descriptions
 
-# Colors (hex codes)
+# Colors (hex codes, used in Waybar tooltip Pango markup)
 [colors]
 header = "#f4b8e4"      # Header text color
 text = "#ffffff"        # Regular text color
 
+# Dashboard settings (for the --dashboard GTK4 window)
+[dashboard]
+show_hourly_graph = true   # Display the animated hourly temperature/precip graph
+forecast_hours = 24        # Number of hours shown in the hourly graph
+forecast_days = 5          # Number of days in the daily forecast (min 5, max 12)
+# window_width = 500       # Initial window width in pixels
+# window_height = 700      # Initial window height in pixels
+# max_window_height = 900  # Optional maximum window height cap
+
 # Multiple location presets (single source of truth)
 # Define as many as you like and choose which one is active.
+# Presets can be managed via the UI (--prompt) or edited here directly.
 [[location_presets]]
 name = "home"
 lat = 40.7128
@@ -38,7 +48,8 @@ label = "Miami, FL"
 active_preset = "home"  # Use the "home" location
 
 # Temperature color bands (catppuccin-inspired palette)
-# Temperatures below max value will use this color
+# Temperatures at or below `max` will use the corresponding color.
+# The last band should use a high value to catch everything above.
 [[temp_bands]]
 max = 59.0
 color = "#8caaee"  # Cool blue

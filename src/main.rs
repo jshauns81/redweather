@@ -9,31 +9,82 @@ mod dashboard;
 mod formatting;
 mod gauges;
 mod graph;
+mod popup;
 mod ui;
 mod utils;
 mod weather;
 
 use serde_json::json;
 use std::env;
+use tracing::{error, info, warn};
 
-use config::{load_config, load_key, ColorsResolved, TempBand, UiConfigResolved};
+use config::{load_config, load_key, ColorsResolved, TempBand, UiConfigResolved, Units};
 use formatting::format_popup_text;
 use ui::run_prompt;
-use weather::{fetch_weather_for_loc, load_cache, load_stale_cache, resolve_location, save_cache};
+use weather::{
+    fetch_weather_for_loc, load_cache, load_stale_cache, resolve_location, save_cache, ApiResponse,
+};
+
+/// Fetches weather data with cache support and stale-cache fallback.
+///
+/// When `skip_cache` is true, always fetches fresh data from the API.
+/// On fetch failure, falls back to stale cached data if available.
+async fn fetch_or_fallback(
+    key: &str,
+    loc: &weather::Location,
+    units: Units,
+    cache_key: &str,
+    skip_cache: bool,
+) -> Option<ApiResponse> {
+    // Try fresh cache first (unless skipping)
+    if !skip_cache {
+        if let Some(cached) = load_cache(cache_key) {
+            return Some(cached);
+        }
+    }
+
+    // Fetch from API
+    match fetch_weather_for_loc(key, loc, units).await {
+        Ok(data) => {
+            save_cache(cache_key, &data);
+            Some(data)
+        }
+        Err(e) => {
+            // Fall back to stale cache
+            if let Some(stale) = load_stale_cache(cache_key) {
+                warn!(error = %e, "Using stale cache due to fetch error");
+                Some(stale)
+            } else {
+                error!(error = %e, "Weather fetch failed with no cache fallback");
+                None
+            }
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
+    // Initialize structured logging (controlled via RUST_LOG env, e.g. RUST_LOG=debug)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let args = env::args().collect::<Vec<String>>();
     let prompt_mode = args.iter().any(|a| a == "--prompt");
     let dashboard_mode = args.iter().any(|a| a == "--dashboard");
+    let popup_mode = args.iter().any(|a| a == "--popup");
     let reload_mode = args.iter().any(|a| a == "--reload");
     let open_web_mode = args.iter().any(|a| a == "--open-web");
 
     let key = match load_key() {
         Some(k) => k,
         None => {
-            eprintln!("Missing OWM_API_KEY (env or ~/.config/redweather/apikey)");
-            if prompt_mode || dashboard_mode {
+            error!("Missing OWM_API_KEY (env or ~/.config/redweather/apikey)");
+            if prompt_mode || dashboard_mode || popup_mode {
                 return;
             }
             let fallback = json!({
@@ -76,9 +127,9 @@ async fn main() {
     let loc = match loc {
         Ok(Some(l)) => l,
         Ok(None) => {
-            eprintln!("No location configured. Please run with --prompt to set your location.");
+            warn!("No location configured. Please run with --prompt to set your location.");
             if dashboard_mode {
-                eprintln!("Cannot launch dashboard without a configured location.");
+                error!("Cannot launch dashboard without a configured location.");
                 return;
             }
             let fallback = json!({
@@ -90,7 +141,7 @@ async fn main() {
             return;
         }
         Err(e) => {
-            eprintln!("Location resolution failed: {}", e);
+            error!(error = %e, "Location resolution failed");
             if dashboard_mode {
                 return;
             }
@@ -106,6 +157,19 @@ async fn main() {
 
     let cache_key = format!("{:.3}_{:.3}", loc.lat, loc.lon);
 
+    // Popup Mode: Layer Shell overlay panel triggered by Waybar click
+    if popup_mode {
+        let data = match fetch_or_fallback(&key, &loc, cfg.units, &cache_key, reload_mode).await {
+            Some(d) => d,
+            None => {
+                error!("Cannot launch popup: weather fetch failed with no cache");
+                return;
+            }
+        };
+        popup::run_popup(data, &loc.label, &cfg);
+        return;
+    }
+
     // Dashboard Mode: Launch immediately with cached data (if any)
     // The dashboard will handle background fetching/refreshing
     if dashboard_mode {
@@ -118,62 +182,27 @@ async fn main() {
         return;
     }
 
-    // Waybar Mode: Synchronous fetch/cache for CLI output
-    // Skip cache if reload mode is active
-    let data = if reload_mode {
-        match fetch_weather_for_loc(&key, &loc, cfg.units).await {
-            Ok(d) => {
-                save_cache(&cache_key, &d);
-                d
-            }
-            Err(e) => {
-                // Try to use stale cache as fallback
-                if let Some(stale) = load_stale_cache(&cache_key) {
-                    eprintln!("Using stale cache due to error: {}", e);
-                    stale
-                } else {
-                    let fallback = json!({
-                        "text": "| ❓ N/A",
-                        "tooltip": format!("<span foreground='#f4b8e4'>Weather error: {}</span>", e),
-                        "markup": "pango"
-                    });
-                    println!("{}", fallback);
-                    return;
-                }
-            }
-        }
-    } else {
-        match load_cache(&cache_key) {
-            Some(cached) => cached,
-            None => match fetch_weather_for_loc(&key, &loc, cfg.units).await {
-                Ok(d) => {
-                    save_cache(&cache_key, &d);
-                    d
-                }
-                Err(e) => {
-                    // Try to use stale cache as fallback
-                    if let Some(stale) = load_stale_cache(&cache_key) {
-                        eprintln!("Using stale cache due to error: {}", e);
-                        stale
-                    } else {
-                        let fallback = json!({
-                            "text": "| ❓ N/A",
-                            "tooltip": format!("<span foreground='#f4b8e4'>Weather error: {}</span>", e),
-                            "markup": "pango"
-                        });
-                        println!("{}", fallback);
-                        return;
-                    }
-                }
-            },
+    // Waybar Mode: fetch with cache support and stale fallback
+    let data = match fetch_or_fallback(&key, &loc, cfg.units, &cache_key, reload_mode).await {
+        Some(d) => d,
+        None => {
+            let fallback = json!({
+                "text": "| ❓ N/A",
+                "tooltip": "<span foreground='#f4b8e4'>Weather fetch failed</span>",
+                "markup": "pango"
+            });
+            println!("{}", fallback);
+            return;
         }
     };
+
+    info!(location = %loc.label, "Rendering weather output");
 
     let ui_resolved = UiConfigResolved::from_config(&cfg.ui);
     let colors_resolved = ColorsResolved::from_config(&cfg.colors);
     let bands = TempBand::from_config(&cfg.temp_bands);
 
-    let (text, tooltip) = format_popup_text(
+    let (text, _tooltip) = format_popup_text(
         &data,
         &loc.label,
         &ui_resolved,
@@ -183,8 +212,7 @@ async fn main() {
     );
     let out = json!({
         "text": text,
-        "tooltip": tooltip,
-        "markup": "pango"
+        "tooltip": "Left-click: Dashboard  ·  Right-click: Popup",
     });
     println!("{}", out);
 }
